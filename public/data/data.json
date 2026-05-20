@@ -1,0 +1,130 @@
+[
+  {
+    "id": "1-0",
+    "x": 0,
+    "y": 0,
+    "image": "/images/base.jpeg",
+    "label": "Interval 0s, 0°",
+    "meta": { "interval": 0, "angle": 0, "quality": 0.95 }
+  },
+  {
+    "id": "1-15",
+    "x": 0,
+    "y": 15,
+    "image": "/images/base.jpeg",
+    "label": "Interval 0s, 15°",
+    "meta": { "interval": 0, "angle": 15, "quality": 0.93 }
+  },
+  {
+    "id": "1-30",
+    "x": 0,
+    "y": 30,
+    "image": "/images/base.jpeg",
+    "label": "Interval 0s, 30°",
+    "meta": { "interval": 0, "angle": 30, "quality": 0.91 }
+  },
+  {
+    "id": "1-45",
+    "x": 0,
+    "y": 45,
+    "image": "/images/base.jpeg",
+    "label": "Interval 0s, 45°",
+    "meta": { "interval": 0, "angle": 45, "quality": 0.88 }
+  },
+  {
+    "id": "2-0",
+    "x": 10,
+    "y": 0,
+    "image": "/images/base.jpeg",
+    "label": "Interval 10s, 0°",
+    "meta": { "interval": 10, "angle": 0, "quality": 0.92 }
+  },
+  {
+    "id": "2-15",
+    "x": 10,
+    "y": 15,
+    "image": "/images/base.jpeg",
+    "label": "Interval 10s, 15°",
+    "meta": { "interval": 10, "angle": 15, "quality": 0.90 }
+  },
+  {
+    "id": "2-30",
+    "x": 10,
+    "y": 30,
+    "image": "/images/base.jpeg",
+    "label": "Interval 10s, 30°",
+    "meta": { "interval": 10, "angle": 30, "quality": 0.87 }
+  },
+  {
+    "id": "2-45",
+    "x": 10,
+    "y": 45,
+    "image": "/images/base.jpeg",
+    "label": "Interval 10s, 45°",
+    "meta": { "interval": 10, "angle": 45, "quality": 0.84 }
+  },
+  {
+    "id": "3-0",
+    "x": 20,
+    "y": 0,
+    "image": "/images/base.jpeg",
+    "label": "Interval 20s, 0°",
+    "meta": { "interval": 20, "angle": 0, "quality": 0.89 }
+  },
+  {
+    "id": "3-15",
+    "x": 20,
+    "y": 15,
+    "image": "/images/base.jpeg",
+    "label": "Interval 20s, 15°",
+    "meta": { "interval": 20, "angle": 15, "quality": 0.86 }
+  },
+  {
+    "id": "3-30",
+    "x": 20,
+    "y": 30,
+    "image": "/images/base.jpeg",
+    "label": "Interval 20s, 30°",
+    "meta": { "interval": 20, "angle": 30, "quality": 0.83 }
+  },
+  {
+    "id": "3-45",
+    "x": 20,
+    "y": 45,
+    "image": "/images/base.jpeg",
+    "label": "Interval 20s, 45°",
+    "meta": { "interval": 20, "angle": 45, "quality": 0.80 }
+  },
+  {
+    "id": "4-0",
+    "x": 30,
+    "y": 0,
+    "image": "/images/base.jpeg",
+    "label": "Interval 30s, 0°",
+    "meta": { "interval": 30, "angle": 0, "quality": 0.85 }
+  },
+  {
+    "id": "4-15",
+    "x": 30,
+    "y": 15,
+    "image": "/images/base.jpeg",
+    "label": "Interval 30s, 15°",
+    "meta": { "interval": 30, "angle": 15, "quality": 0.82 }
+  },
+  {
+    "id": "4-30",
+    "x": 30,
+    "y": 30,
+    "image": "/images/base.jpeg",
+    "label": "Interval 30s, 30°",
+    "meta": { "interval": 30, "angle": 30, "quality": 0.79 }
+  },
+  {
+    "id": "4-45",
+    "x": 30,
+    "y": 45,
+    "image": "/images/base.jpeg",
+    "label": "Interval 30s, 45°",
+    "meta": { "interval": 30, "angle": 45, "quality": 0.76 }
+  }
+]

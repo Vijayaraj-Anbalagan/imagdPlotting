@@ -1,0 +1,162 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+.app-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.app-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #f0f0f0;
+}
+
+/* Tab Bar */
+.tab-container {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #333;
+  padding-bottom: 8px;
+}
+
+.tab-button {
+  padding: 8px 16px;
+  border: 1px solid #444;
+  background: #2a2a3e;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.85rem;
+  border-radius: 4px 4px 0 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-button:hover {
+  background: #3a3a5e;
+  color: #ddd;
+}
+
+.tab-button.active {
+  background: #4a4a7e;
+  color: #fff;
+  border-color: #6a6aae;
+}
+
+/* Image Count Selector */
+.image-count-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.selector-label {
+  font-size: 0.85rem;
+  color: #aaa;
+}
+
+.count-button {
+  padding: 4px 12px;
+  border: 1px solid #444;
+  background: #2a2a3e;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.8rem;
+  border-radius: 4px;
+}
+
+.count-button:hover {
+  background: #3a3a5e;
+}
+
+.count-button.active {
+  background: #4a4a7e;
+  color: #fff;
+  border-color: #6a6aae;
+}
+
+/* Viewer Container */
+.viewer-container {
+  background: #16213e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 16px;
+  min-height: 500px;
+  position: relative;
+}
+
+/* Loading / Error States */
+.plotter-loading,
+.plotter-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.plotter-error {
+  color: #e74c3c;
+}
+
+/* Tooltip */
+.plotter-tooltip {
+  position: absolute;
+  background: #2a2a3e;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  color: #ddd;
+  pointer-events: none;
+  z-index: 100;
+  max-width: 220px;
+}
+
+.plotter-tooltip .tooltip-label {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.plotter-tooltip .tooltip-meta {
+  color: #aaa;
+}
+
+.plotter-tooltip .tooltip-meta span {
+  display: block;
+}
+
+/* Zoom Controls */
+.zoom-controls {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.zoom-button {
+  padding: 4px 10px;
+  border: 1px solid #444;
+  background: #2a2a3e;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.8rem;
+  border-radius: 4px;
+}
+
+.zoom-button:hover {
+  background: #3a3a5e;
+  color: #ddd;
+}
