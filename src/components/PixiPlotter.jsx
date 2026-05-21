@@ -1,9 +1,28 @@
 import { useRef, useEffect, useState, useCallback } from "react";
-import { Application as PixiApp, Sprite, Container, Text as PixiText } from "pixi.js";
+import {
+  Application as PixiApp,
+  Sprite,
+  Container,
+  Text as PixiText,
+  Graphics,
+  Assets,
+} from "pixi.js";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+
+const AXIS_TICK_COUNT = 5;
+const TICK_LABEL_COLOR = "#888888";
+const TICK_LABEL_SIZE = 11;
+const GRID_COLOR = 0x333333;
+const GRID_ALPHA = 0.6;
+const AXIS_BORDER_COLOR = 0x555555;
+const EXTENT_PADDING_RATIO = 0.2;
+const EXTENT_FALLBACK_PADDING = 5;
+const ZOOM_STEP = 1.5;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 10;
 
 function PixiPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
@@ -12,85 +31,113 @@ function PixiPlotter({ imageCount, xGap, yGap }) {
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
-    <PixiCanvas plotterPoints={plotterPoints} imageCount={imageCount} xGap={xGap} yGap={yGap} />
+    <PixiCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      xGap={xGap}
+      yGap={yGap}
+    />
   );
 }
 
 function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const canvasContainerRef = useRef(null);
   const pixiAppRef = useRef(null);
-  const contentContainerRef = useRef(null);
-  const axesContainerRef = useRef(null);
+  const contentLayerRef = useRef(null);
+  const axesLayerRef = useRef(null);
   const tooltipRef = useRef(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const panOffsetRef = useRef({ x: 0, y: 0 });
   const scaleRef = useRef(1);
+  const panOffsetRef = useRef({ x: 0, y: 0 });
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false);
 
-  const margin = PLOT_MARGIN;
-  const innerWidth = PLOT_DIMENSIONS.width - margin.left - margin.right;
-  const innerHeight = PLOT_DIMENSIONS.height - margin.top - margin.bottom;
-
-  const initializePixiApp = useCallback(async () => {
-    if (!canvasContainerRef.current || pixiAppRef.current) return;
-
-    const pixiApplication = new PixiApp();
-    await pixiApplication.init({
-      width: PLOT_DIMENSIONS.width,
-      height: PLOT_DIMENSIONS.height,
-      background: 0x16213e,
-      antialias: true,
-    });
-
-    canvasContainerRef.current.appendChild(pixiApplication.canvas);
-    pixiAppRef.current = pixiApplication;
-
-    const axesGroup = new Container();
-    axesGroup.x = margin.left;
-    axesGroup.y = margin.top;
-    pixiApplication.stage.addChild(axesGroup);
-    axesContainerRef.current = axesGroup;
-
-    const contentGroup = new Container();
-    contentGroup.x = margin.left;
-    contentGroup.y = margin.top;
-    pixiApplication.stage.addChild(contentGroup);
-    contentContainerRef.current = contentGroup;
-  }, []);
+  const innerWidth = PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+  const innerHeight = PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
   useEffect(() => {
-    initializePixiApp();
+    let cancelled = false;
+
+    async function bootstrapPixi() {
+      if (!canvasContainerRef.current || pixiAppRef.current) return;
+
+      const pixiApplication = new PixiApp();
+      await pixiApplication.init({
+        width: PLOT_DIMENSIONS.width,
+        height: PLOT_DIMENSIONS.height,
+        background: 0x16213e,
+        antialias: true,
+      });
+
+      if (cancelled) {
+        pixiApplication.destroy(true);
+        return;
+      }
+
+      canvasContainerRef.current.appendChild(pixiApplication.canvas);
+      pixiAppRef.current = pixiApplication;
+
+      const axesLayer = new Container();
+      axesLayer.x = PLOT_MARGIN.left;
+      axesLayer.y = PLOT_MARGIN.top;
+      pixiApplication.stage.addChild(axesLayer);
+      axesLayerRef.current = axesLayer;
+
+      const contentLayer = new Container();
+      contentLayer.x = PLOT_MARGIN.left;
+      contentLayer.y = PLOT_MARGIN.top;
+      pixiApplication.stage.addChild(contentLayer);
+      contentLayerRef.current = contentLayer;
+
+      setIsAppReady(true);
+    }
+
+    bootstrapPixi();
 
     return () => {
+      cancelled = true;
       if (pixiAppRef.current) {
         pixiAppRef.current.destroy(true);
         pixiAppRef.current = null;
-        contentContainerRef.current = null;
+        contentLayerRef.current = null;
+        axesLayerRef.current = null;
+        setIsAppReady(false);
       }
     };
-  }, [initializePixiApp]);
+  }, []);
 
   useEffect(() => {
-    if (!pixiAppRef.current || !contentContainerRef.current || !axesContainerRef.current) return;
+    if (!isAppReady || !contentLayerRef.current || !axesLayerRef.current) return;
+    if (plotterPoints.length === 0) return;
 
-    const contentGroup = contentContainerRef.current;
-    const axesGroup = axesContainerRef.current;
-    contentGroup.removeChildren();
-    axesGroup.removeChildren();
+    contentLayerRef.current.removeChildren();
+    axesLayerRef.current.removeChildren();
 
-    renderPoints(pixiAppRef.current, contentGroup, axesGroup, plotterPoints, imageCount, innerWidth, innerHeight, tooltipRef, xGap, yGap);
-  }, [plotterPoints, imageCount, innerWidth, innerHeight, xGap, yGap]);
+    const xExtent = computeExtent(plotterPoints, "x");
+    const yExtent = computeExtent(plotterPoints, "y");
+
+    const xScale = buildLinearScale(xExtent[0], xExtent[1], 0, innerWidth);
+    const yScale = buildLinearScale(yExtent[0], yExtent[1], innerHeight, 0);
+
+    drawGrid(axesLayerRef.current, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight);
+    drawAxesLabels(axesLayerRef.current, xScale, yScale, xExtent, yExtent, innerHeight);
+
+    const uniqueImageUrls = [...new Set(plotterPoints.map((point) => point.image))];
+
+    Assets.load(uniqueImageUrls).then(() => {
+      if (!contentLayerRef.current) return;
+      drawDataPoints(contentLayerRef.current, plotterPoints, xScale, yScale, imageCount, tooltipRef);
+    });
+  }, [isAppReady, plotterPoints, imageCount, xGap, yGap, innerWidth, innerHeight]);
 
   const handleWheel = useCallback((event) => {
     event.preventDefault();
-    if (!contentContainerRef.current) return;
+    if (!contentLayerRef.current) return;
 
-    const scaleDelta = event.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.3, Math.min(scaleRef.current * scaleDelta, 10));
+    const scaleDelta = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+    const newScale = Math.max(ZOOM_MIN, Math.min(scaleRef.current * scaleDelta, ZOOM_MAX));
     scaleRef.current = newScale;
-
-    const contentGroup = contentContainerRef.current;
-    contentGroup.scale.set(newScale);
+    contentLayerRef.current.scale.set(newScale);
   }, []);
 
   const handleMouseDown = useCallback((event) => {
@@ -101,42 +148,43 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     };
   }, []);
 
-  const handleMouseMove = useCallback((event) => {
-    if (!isDragging || !contentContainerRef.current) return;
+  const handleMouseMove = useCallback(
+    (event) => {
+      if (!isDragging || !contentLayerRef.current) return;
 
-    const newOffsetX = event.clientX - dragStartRef.current.x;
-    const newOffsetY = event.clientY - dragStartRef.current.y;
-    panOffsetRef.current = { x: newOffsetX, y: newOffsetY };
+      const newOffsetX = event.clientX - dragStartRef.current.x;
+      const newOffsetY = event.clientY - dragStartRef.current.y;
+      panOffsetRef.current = { x: newOffsetX, y: newOffsetY };
 
-    contentContainerRef.current.x = margin.left + newOffsetX;
-    contentContainerRef.current.y = margin.top + newOffsetY;
-  }, [isDragging, margin.left, margin.top]);
+      contentLayerRef.current.x = PLOT_MARGIN.left + newOffsetX;
+      contentLayerRef.current.y = PLOT_MARGIN.top + newOffsetY;
+    },
+    [isDragging]
+  );
 
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+
+  const handleZoomIn = useCallback(() => {
+    const newScale = Math.min(scaleRef.current * ZOOM_STEP, ZOOM_MAX);
+    scaleRef.current = newScale;
+    if (contentLayerRef.current) contentLayerRef.current.scale.set(newScale);
   }, []);
 
-  const handleZoomIn = () => {
-    const newScale = Math.min(scaleRef.current * 1.5, 10);
+  const handleZoomOut = useCallback(() => {
+    const newScale = Math.max(scaleRef.current / ZOOM_STEP, ZOOM_MIN);
     scaleRef.current = newScale;
-    if (contentContainerRef.current) contentContainerRef.current.scale.set(newScale);
-  };
+    if (contentLayerRef.current) contentLayerRef.current.scale.set(newScale);
+  }, []);
 
-  const handleZoomOut = () => {
-    const newScale = Math.max(scaleRef.current / 1.5, 0.3);
-    scaleRef.current = newScale;
-    if (contentContainerRef.current) contentContainerRef.current.scale.set(newScale);
-  };
-
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     scaleRef.current = 1;
     panOffsetRef.current = { x: 0, y: 0 };
-    if (contentContainerRef.current) {
-      contentContainerRef.current.scale.set(1);
-      contentContainerRef.current.x = margin.left;
-      contentContainerRef.current.y = margin.top;
+    if (contentLayerRef.current) {
+      contentLayerRef.current.scale.set(1);
+      contentLayerRef.current.x = PLOT_MARGIN.left;
+      contentLayerRef.current.y = PLOT_MARGIN.top;
     }
-  };
+  }, []);
 
   return (
     <div style={{ position: "relative" }}>
@@ -157,24 +205,68 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       <div
         ref={tooltipRef}
         className="plotter-tooltip"
-        style={{ display: "none" }}
+        style={{ display: "none", position: "absolute", pointerEvents: "none" }}
       />
     </div>
   );
 }
 
-function renderPoints(pixiApplication, contentGroup, axesGroup, plotterPoints, imageCount, innerWidth, innerHeight, tooltipRef, xGap, yGap) {
-  const xExtent = getExtent(plotterPoints, "x");
-  const yExtent = getExtent(plotterPoints, "y");
+function drawGrid(axesLayer, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight) {
+  const grid = new Graphics();
 
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
-  
-  const xScale = createLinearScale(xExtent[0], xExtent[1], 0, innerWidth * xSpacingScale);
-  const yScale = createLinearScale(yExtent[0], yExtent[1], innerHeight * ySpacingScale, 0);
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / AXIS_TICK_COUNT);
+    const xPos = xScale(xValue);
+    grid.moveTo(xPos, 0);
+    grid.lineTo(xPos, innerHeight);
+  }
 
-  renderAxisLabels(axesGroup, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight);
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / AXIS_TICK_COUNT);
+    const yPos = yScale(yValue);
+    grid.moveTo(0, yPos);
+    grid.lineTo(innerWidth, yPos);
+  }
 
+  grid.stroke({ width: 1, color: GRID_COLOR, alpha: GRID_ALPHA });
+
+  const border = new Graphics();
+  border.rect(0, 0, innerWidth, innerHeight);
+  border.stroke({ width: 1, color: AXIS_BORDER_COLOR });
+
+  axesLayer.addChild(grid);
+  axesLayer.addChild(border);
+}
+
+function drawAxesLabels(axesLayer, xScale, yScale, xExtent, yExtent, innerHeight) {
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / AXIS_TICK_COUNT);
+    const xPos = xScale(xValue);
+
+    const xLabel = new PixiText({
+      text: Math.round(xValue).toString(),
+      style: { fill: TICK_LABEL_COLOR, fontSize: TICK_LABEL_SIZE },
+    });
+    xLabel.x = xPos - xLabel.width / 2;
+    xLabel.y = innerHeight + 6;
+    axesLayer.addChild(xLabel);
+  }
+
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / AXIS_TICK_COUNT);
+    const yPos = yScale(yValue);
+
+    const yLabel = new PixiText({
+      text: Math.round(yValue).toString(),
+      style: { fill: TICK_LABEL_COLOR, fontSize: TICK_LABEL_SIZE },
+    });
+    yLabel.x = -yLabel.width - 6;
+    yLabel.y = yPos - yLabel.height / 2;
+    axesLayer.addChild(yLabel);
+  }
+}
+
+function drawDataPoints(contentLayer, plotterPoints, xScale, yScale, imageCount, tooltipRef) {
   plotterPoints.forEach((point) => {
     const centerX = xScale(point.x);
     const centerY = yScale(point.y);
@@ -189,58 +281,23 @@ function renderPoints(pixiApplication, contentGroup, axesGroup, plotterPoints, i
       sprite.eventMode = "static";
       sprite.cursor = "pointer";
 
-      sprite.on("pointerenter", (event) => {
-        showPixiTooltip(tooltipRef.current, event, point);
-      });
-      sprite.on("pointerleave", () => {
-        hidePixiTooltip(tooltipRef.current);
-      });
+      sprite.on("pointerenter", (event) => showPixiTooltip(tooltipRef.current, event, point));
+      sprite.on("pointerleave", () => hidePixiTooltip(tooltipRef.current));
 
-      contentGroup.addChild(sprite);
+      contentLayer.addChild(sprite);
     });
   });
 }
 
-function renderAxisLabels(contentGroup, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight) {
-  const tickCount = 5;
-
-  for (let i = 0; i <= tickCount; i++) {
-    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / tickCount);
-    const xPosition = xScale(xValue);
-
-    const xLabel = new PixiText({
-      text: Math.round(xValue).toString(),
-      style: { fill: "#888", fontSize: 11 },
-    });
-    xLabel.x = xPosition - xLabel.width / 2;
-    xLabel.y = innerHeight + 5;
-    contentGroup.addChild(xLabel);
-  }
-
-  for (let i = 0; i <= tickCount; i++) {
-    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / tickCount);
-    const yPosition = yScale(yValue);
-
-    const yLabel = new PixiText({
-      text: Math.round(yValue).toString(),
-      style: { fill: "#888", fontSize: 11 },
-    });
-    yLabel.x = -yLabel.width - 5;
-    yLabel.y = yPosition - yLabel.height / 2;
-    contentGroup.addChild(yLabel);
-  }
-}
-
-function getExtent(dataPoints, key) {
+function computeExtent(dataPoints, key) {
   const values = dataPoints.map((point) => point[key]);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const padding = (max - min) * 0.15 || 5;
-
+  const padding = (max - min) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
   return [min - padding, max + padding];
 }
 
-function createLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
+function buildLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
   return (value) => {
     const ratio = (value - domainMin) / (domainMax - domainMin);
     return rangeMin + ratio * (rangeMax - rangeMin);
@@ -250,6 +307,12 @@ function createLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
 function showPixiTooltip(tooltipElement, event, point) {
   if (!tooltipElement) return;
 
+  const globalPosition = event.global ?? event.data?.global;
+  if (globalPosition) {
+    tooltipElement.style.left = `${globalPosition.x + 15}px`;
+    tooltipElement.style.top = `${globalPosition.y - 10}px`;
+  }
+
   tooltipElement.style.display = "block";
   tooltipElement.innerHTML =
     `<div class="tooltip-label">${point.label}</div>` +
@@ -258,12 +321,6 @@ function showPixiTooltip(tooltipElement, event, point) {
     `<span>Angle: ${point.meta.angle}°</span>` +
     `<span>Quality: ${point.meta.quality}</span>` +
     `</div>`;
-
-  const globalPosition = event.global || event.data?.global;
-  if (globalPosition) {
-    tooltipElement.style.left = `${globalPosition.x + 15}px`;
-    tooltipElement.style.top = `${globalPosition.y - 10}px`;
-  }
 }
 
 function hidePixiTooltip(tooltipElement) {
