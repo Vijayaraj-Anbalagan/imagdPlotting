@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   ScatterChart,
   Scatter,
@@ -10,12 +10,30 @@ import {
 } from "recharts";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
-import { CELL_SIZE } from "../lib/constants";
+import { CELL_SIZE, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+
+const ZOOM_STEP = 1.5;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 8;
+const DOMAIN_PADDING_UNITS = 1;
+const CLIP_PATH_ID = "recharts-plot-clip";
 
 function RechartsPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
   const [zoomLevel, setZoomLevel] = useState(1);
+
+  const handleZoomIn = useCallback(
+    () => setZoomLevel((prev) => Math.min(prev * ZOOM_STEP, ZOOM_MAX)),
+    []
+  );
+
+  const handleZoomOut = useCallback(
+    () => setZoomLevel((prev) => Math.max(prev / ZOOM_STEP, ZOOM_MIN)),
+    []
+  );
+
+  const handleReset = useCallback(() => setZoomLevel(1), []);
 
   if (isLoading) return <div className="plotter-loading">Loading data…</div>;
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
@@ -24,9 +42,9 @@ function RechartsPlotter({ imageCount, xGap, yGap }) {
     <div>
       <PlotterControls
         zoomLevel={zoomLevel}
-        onZoomIn={() => setZoomLevel((prev) => Math.min(prev * 1.5, 5))}
-        onZoomOut={() => setZoomLevel((prev) => Math.max(prev / 1.5, 0.3))}
-        onReset={() => setZoomLevel(1)}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onReset={handleReset}
       />
       <PlotArea
         plotterPoints={plotterPoints}
@@ -39,37 +57,35 @@ function RechartsPlotter({ imageCount, xGap, yGap }) {
   );
 }
 
+function buildAxisDomain(values, zoomLevel, padding) {
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+  const center = (dataMin + dataMax) / 2;
+  const halfSpan = ((dataMax - dataMin) / 2 + padding) / zoomLevel;
+  return [center - halfSpan, center + halfSpan];
+}
+
 function PlotArea({ plotterPoints, imageCount, zoomLevel, xGap, yGap }) {
+  const containerRef = useRef(null);
   const xValues = plotterPoints.map((point) => point.x);
   const yValues = plotterPoints.map((point) => point.y);
-  const xPadding = 10 / zoomLevel;
-  const yPadding = 10 / zoomLevel;
 
-  const xMin = Math.min(...xValues) - xPadding;
-  const xMax = Math.max(...xValues) + xPadding;
-  const yMin = Math.min(...yValues) - yPadding;
-  const yMax = Math.max(...yValues) + yPadding;
-
-  const xCenter = (xMax + xMin) / 2;
-  const yCenter = (yMax + yMin) / 2;
-
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
-
-  const xRange = (xMax - xMin) / zoomLevel / xSpacingScale;
-  const yRange = (yMax - yMin) / zoomLevel / ySpacingScale;
-
-  const domainX = [xCenter - xRange / 2, xCenter + xRange / 2];
-  const domainY = [yCenter - yRange / 2, yCenter + yRange / 2];
+  const domainX = buildAxisDomain(xValues, zoomLevel, DOMAIN_PADDING_UNITS);
+  const domainY = buildAxisDomain(yValues, zoomLevel, DOMAIN_PADDING_UNITS);
 
   const renderCustomShape = useCallback(
     (shapeProps) => {
       const { cx, cy, payload } = shapeProps;
-      const cellSize = CELL_SIZE * Math.min(zoomLevel, 2);
-      const positions = computeImagePositions(cx, cy, cellSize, cellSize, imageCount, xGap, yGap);
+      const positions = computeImagePositions(
+        cx,
+        cy,
+        CELL_SIZE,
+        CELL_SIZE,
+        imageCount
+      );
 
       return (
-        <g>
+        <g clipPath={`url(#${CLIP_PATH_ID})`}>
           {positions.map((position, index) => (
             <image
               key={`${payload.id}-${index}`}
@@ -84,37 +100,51 @@ function PlotArea({ plotterPoints, imageCount, zoomLevel, xGap, yGap }) {
         </g>
       );
     },
-    [imageCount, zoomLevel, xGap, yGap]
+    [imageCount]
   );
 
+  const chartHeight = 500;
+  const plotWidth =
+    (containerRef.current?.offsetWidth ?? 900) -
+    PLOT_MARGIN.left -
+    PLOT_MARGIN.right;
+  const plotHeight = chartHeight - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+
   return (
-    <ResponsiveContainer width="100%" height={500}>
-      <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis
-          type="number"
-          dataKey="x"
-          domain={domainX}
-          tick={{ fill: "#888", fontSize: 12 }}
-          stroke="#555"
-          name="X"
-        />
-        <YAxis
-          type="number"
-          dataKey="y"
-          domain={domainY}
-          tick={{ fill: "#888", fontSize: 12 }}
-          stroke="#555"
-          name="Y"
-        />
-        <Tooltip content={<MetadataTooltip />} />
-        <Scatter
-          key={`scatter-${imageCount}-${zoomLevel}-${xGap}-${yGap}`}
-          data={plotterPoints}
-          shape={renderCustomShape}
-        />
-      </ScatterChart>
-    </ResponsiveContainer>
+    <div ref={containerRef}>
+      <ResponsiveContainer width="100%" height={chartHeight}>
+        <ScatterChart margin={PLOT_MARGIN}>
+          <defs>
+            <clipPath id={CLIP_PATH_ID}>
+              <rect x={0} y={0} width={plotWidth} height={plotHeight} />
+            </clipPath>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          <XAxis
+            type="number"
+            dataKey="x"
+            domain={domainX}
+            tick={{ fill: "#888", fontSize: 12 }}
+            stroke="#555"
+            name="X"
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            domain={domainY}
+            tick={{ fill: "#888", fontSize: 12 }}
+            stroke="#555"
+            name="Y"
+          />
+          <Tooltip content={<MetadataTooltip />} />
+          <Scatter
+            key={`scatter-${imageCount}-${zoomLevel}-${xGap}-${yGap}`}
+            data={plotterPoints}
+            shape={renderCustomShape}
+          />
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
