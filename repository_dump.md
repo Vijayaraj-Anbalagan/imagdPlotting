@@ -5,14 +5,12 @@
 ```txt
 imagdPlotting
 ├── generate-repo-md.cjs
-├── index.html
 ├── package.json
 ├── public
 │   ├── data
 │   │   └── data.json
 │   └── images
 └── src
-    ├── App.css
     ├── App.jsx
     ├── components
     │   ├── D3Plotter.jsx
@@ -32,27 +30,6 @@ imagdPlotting
 ```
 
 ## Files
-
----
-
-# index.html
-
-```html
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>poc</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-
-```
 
 ---
 
@@ -238,176 +215,6 @@ imagdPlotting
     "meta": { "interval": 30, "angle": 45, "quality": 0.76 }
   }
 ]
-
-```
-
----
-
-# src\App.css
-
-```css
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #1a1a2e;
-  color: #e0e0e0;
-}
-
-.app-container {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 20px;
-}
-
-.app-title {
-  font-size: 1.4rem;
-  font-weight: 600;
-  margin-bottom: 16px;
-  color: #f0f0f0;
-}
-
-/* Tab Bar */
-.tab-container {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid #333;
-  padding-bottom: 8px;
-}
-
-.tab-button {
-  padding: 8px 16px;
-  border: 1px solid #444;
-  background: #2a2a3e;
-  color: #aaa;
-  cursor: pointer;
-  font-size: 0.85rem;
-  border-radius: 4px 4px 0 0;
-  transition: background 0.15s, color 0.15s;
-}
-
-.tab-button:hover {
-  background: #3a3a5e;
-  color: #ddd;
-}
-
-.tab-button.active {
-  background: #4a4a7e;
-  color: #fff;
-  border-color: #6a6aae;
-}
-
-/* Image Count Selector */
-.image-count-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.selector-label {
-  font-size: 0.85rem;
-  color: #aaa;
-}
-
-.count-button {
-  padding: 4px 12px;
-  border: 1px solid #444;
-  background: #2a2a3e;
-  color: #aaa;
-  cursor: pointer;
-  font-size: 0.8rem;
-  border-radius: 4px;
-}
-
-.count-button:hover {
-  background: #3a3a5e;
-}
-
-.count-button.active {
-  background: #4a4a7e;
-  color: #fff;
-  border-color: #6a6aae;
-}
-
-/* Viewer Container */
-.viewer-container {
-  background: #16213e;
-  border: 1px solid #333;
-  border-radius: 6px;
-  padding: 16px;
-  min-height: 500px;
-  position: relative;
-}
-
-/* Loading / Error States */
-.plotter-loading,
-.plotter-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
-  color: #888;
-  font-size: 0.9rem;
-}
-
-.plotter-error {
-  color: #e74c3c;
-}
-
-/* Tooltip */
-.plotter-tooltip {
-  position: absolute;
-  background: #2a2a3e;
-  border: 1px solid #555;
-  border-radius: 4px;
-  padding: 8px 12px;
-  font-size: 0.75rem;
-  color: #ddd;
-  pointer-events: none;
-  z-index: 100;
-  max-width: 220px;
-}
-
-.plotter-tooltip .tooltip-label {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.plotter-tooltip .tooltip-meta {
-  color: #aaa;
-}
-
-.plotter-tooltip .tooltip-meta span {
-  display: block;
-}
-
-/* Zoom Controls */
-.zoom-controls {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.zoom-button {
-  padding: 4px 10px;
-  border: 1px solid #444;
-  background: #2a2a3e;
-  color: #aaa;
-  cursor: pointer;
-  font-size: 0.8rem;
-  border-radius: 4px;
-}
-
-.zoom-button:hover {
-  background: #3a3a5e;
-  color: #ddd;
-}
 
 ```
 
@@ -1273,11 +1080,23 @@ export default ImageCountSelector;
 
 ```jsx
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Stage, Layer, Image as KonvaImage, Text, Line } from "react-konva";
+import { Stage, Layer, Image as KonvaImage, Text, Line, Rect, Group } from "react-konva";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+
+const AXIS_TICK_COUNT = 8;
+const EXTENT_PADDING_RATIO = 0.2;
+const EXTENT_FALLBACK_PADDING = 5;
+const ZOOM_STEP = 1.5;
+const PINCH_ZOOM_SENSITIVITY = 0.01;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 10;
+const GRID_COLOR = "#2a2a3e";
+const AXIS_LINE_COLOR = "#555555";
+const TICK_LABEL_COLOR = "#aaaaaa";
+const TICK_LABEL_FONT_SIZE = 11;
 
 function KonvaPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
@@ -1286,56 +1105,132 @@ function KonvaPlotter({ imageCount, xGap, yGap }) {
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
-    <KonvaCanvas plotterPoints={plotterPoints} imageCount={imageCount} xGap={xGap} yGap={yGap} />
+    <KonvaCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      xGap={xGap}
+      yGap={yGap}
+    />
   );
 }
 
 function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
-  const [stageScale, setStageScale] = useState(1);
-  const [stagePosition, setStagePosition] = useState({ x: 0, y: 0 });
+  const [contentScale, setContentScale] = useState(1);
+  const [contentOffset, setContentOffset] = useState({ x: 0, y: 0 });
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const draggableGroupRef = useRef(null);
+  const stageRef = useRef(null);
 
-  const margin = PLOT_MARGIN;
-  const innerWidth = PLOT_DIMENSIONS.width - margin.left - margin.right;
-  const innerHeight = PLOT_DIMENSIONS.height - margin.top - margin.bottom;
+  const innerWidth = PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+  const innerHeight = PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
-  const { xScale, yScale, xExtent, yExtent } = computeScales(plotterPoints, innerWidth, innerHeight, xGap, yGap);
+  const { xScale, yScale, xExtent, yExtent } = buildScales(
+    plotterPoints,
+    innerWidth,
+    innerHeight
+  );
 
-  const handleStageWheel = useCallback((event) => {
-    event.evt.preventDefault();
-    const stage = event.target.getStage();
-    const oldScale = stageScale;
-    const pointerPosition = stage.getPointerPosition();
+  const visibleDomain = computeVisibleDomain(
+    xExtent,
+    yExtent,
+    contentOffset,
+    contentScale,
+    innerWidth,
+    innerHeight
+  );
 
-    const scaleDelta = event.evt.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.3, Math.min(oldScale * scaleDelta, 10));
+  const handleWheel = useCallback(
+    (event) => {
+      event.evt.preventDefault();
+      const stage = event.target.getStage();
+      const pointerPosition = stage.getPointerPosition();
 
-    const mousePointTo = {
-      x: (pointerPosition.x - stagePosition.x) / oldScale,
-      y: (pointerPosition.y - stagePosition.y) / oldScale,
-    };
+      if (!isPointerInsidePlotArea(pointerPosition, innerWidth, innerHeight)) return;
 
-    setStageScale(newScale);
-    setStagePosition({
-      x: pointerPosition.x - mousePointTo.x * newScale,
-      y: pointerPosition.y - mousePointTo.y * newScale,
-    });
-  }, [stageScale, stagePosition]);
+      const nativeEvent = event.evt;
+      const isPinchGesture = nativeEvent.ctrlKey;
+      const scaleDelta = computeWheelScaleDelta(nativeEvent.deltaY, isPinchGesture);
+      const newScale = clampScale(contentScale * scaleDelta);
 
-  const handleStageDragEnd = useCallback((event) => {
-    setStagePosition({
-      x: event.target.x(),
-      y: event.target.y(),
-    });
+      const mouseRelX = pointerPosition.x - PLOT_MARGIN.left - contentOffset.x;
+      const mouseRelY = pointerPosition.y - PLOT_MARGIN.top - contentOffset.y;
+
+      const nextOffsetX = contentOffset.x - mouseRelX * (newScale / contentScale - 1);
+      const nextOffsetY = contentOffset.y - mouseRelY * (newScale / contentScale - 1);
+
+      const clampedOffset = clampContentOffset(nextOffsetX, nextOffsetY, newScale, innerWidth, innerHeight);
+
+      setContentScale(newScale);
+      setContentOffset(clampedOffset);
+    },
+    [contentScale, contentOffset, innerWidth, innerHeight]
+  );
+
+  const handleContentDragStart = useCallback(() => {
+    setIsDragging(true);
   }, []);
 
-  const handleZoomIn = () => setStageScale(Math.min(stageScale * 1.5, 10));
-  const handleZoomOut = () => setStageScale(Math.max(stageScale / 1.5, 0.3));
-  const handleReset = () => {
-    setStageScale(1);
-    setStagePosition({ x: 0, y: 0 });
-  };
+  const handleContentDragMove = useCallback(
+    (event) => {
+      const node = event.target;
+      const offsetX = node.x() - PLOT_MARGIN.left;
+      const offsetY = node.y() - PLOT_MARGIN.top;
+
+      const clamped = clampContentOffset(offsetX, offsetY, contentScale, innerWidth, innerHeight);
+
+      node.x(PLOT_MARGIN.left + clamped.x);
+      node.y(PLOT_MARGIN.top + clamped.y);
+    },
+    [contentScale, innerWidth, innerHeight]
+  );
+
+  const handleContentDragEnd = useCallback(
+    (event) => {
+      setIsDragging(false);
+      const nodeX = event.target.x();
+      const nodeY = event.target.y();
+      setContentOffset({
+        x: nodeX - PLOT_MARGIN.left,
+        y: nodeY - PLOT_MARGIN.top,
+      });
+    },
+    []
+  );
+
+  const handleZoomIn = useCallback(() => {
+    const centerX = innerWidth / 2;
+    const centerY = innerHeight / 2;
+    const newScale = clampScale(contentScale * ZOOM_STEP);
+
+    const nextOffsetX = contentOffset.x - centerX * (newScale / contentScale - 1);
+    const nextOffsetY = contentOffset.y - centerY * (newScale / contentScale - 1);
+    const clampedOffset = clampContentOffset(nextOffsetX, nextOffsetY, newScale, innerWidth, innerHeight);
+
+    setContentScale(newScale);
+    setContentOffset(clampedOffset);
+  }, [contentScale, contentOffset, innerWidth, innerHeight]);
+
+  const handleZoomOut = useCallback(() => {
+    const centerX = innerWidth / 2;
+    const centerY = innerHeight / 2;
+    const newScale = clampScale(contentScale / ZOOM_STEP);
+
+    const nextOffsetX = contentOffset.x - centerX * (newScale / contentScale - 1);
+    const nextOffsetY = contentOffset.y - centerY * (newScale / contentScale - 1);
+    const clampedOffset = clampContentOffset(nextOffsetX, nextOffsetY, newScale, innerWidth, innerHeight);
+
+    setContentScale(newScale);
+    setContentOffset(clampedOffset);
+  }, [contentScale, contentOffset, innerWidth, innerHeight]);
+
+  const handleReset = useCallback(() => {
+    setContentScale(1);
+    setContentOffset({ x: 0, y: 0 });
+  }, []);
+
+  const stageCursor = isDragging ? "grabbing" : contentScale > 1 ? "grab" : "default";
 
   return (
     <div style={{ position: "relative" }}>
@@ -1343,126 +1238,253 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onReset={handleReset}
+        zoomLevel={contentScale}
       />
       <Stage
+        ref={stageRef}
         width={PLOT_DIMENSIONS.width}
         height={PLOT_DIMENSIONS.height}
-        scaleX={stageScale}
-        scaleY={stageScale}
-        x={stagePosition.x}
-        y={stagePosition.y}
-        draggable
-        onWheel={handleStageWheel}
-        onDragEnd={handleStageDragEnd}
+        onWheel={handleWheel}
+        style={{ cursor: stageCursor }}
       >
-        <Layer>
-          <AxisLines
-            xScale={xScale}
-            yScale={yScale}
-            xExtent={xExtent}
-            yExtent={yExtent}
-            margin={margin}
+        {/* Static axis layer — grid, labels, border (not affected by zoom/pan) */}
+        <Layer listening={false}>
+          <PlotBackground innerWidth={innerWidth} innerHeight={innerHeight} />
+          <AxisGrid
+            visibleDomain={visibleDomain}
             innerWidth={innerWidth}
             innerHeight={innerHeight}
           />
-          {plotterPoints.map((point) => (
-            <ImagePointGroup
-              key={point.id}
-              point={point}
-              xScale={xScale}
-              yScale={yScale}
-              margin={margin}
-              imageCount={imageCount}
-              onHover={setHoveredPoint}
-              onCursorMove={setCursorPosition}
-            />
-          ))}
+          <AxisLabels
+            visibleDomain={visibleDomain}
+            innerWidth={innerWidth}
+            innerHeight={innerHeight}
+          />
+          <AxisBorder innerWidth={innerWidth} innerHeight={innerHeight} />
+        </Layer>
+
+        {/* Clipped content layer — images are clipped to the plot area */}
+        <Layer>
+          <ClippedContentGroup
+            innerWidth={innerWidth}
+            innerHeight={innerHeight}
+            contentOffset={contentOffset}
+            contentScale={contentScale}
+            draggableGroupRef={draggableGroupRef}
+            onDragStart={handleContentDragStart}
+            onDragMove={handleContentDragMove}
+            onDragEnd={handleContentDragEnd}
+          >
+            {plotterPoints.map((point) => (
+              <ImagePointGroup
+                key={point.id}
+                point={point}
+                xScale={xScale}
+                yScale={yScale}
+                imageCount={imageCount}
+                onHover={setHoveredPoint}
+                onCursorMove={setCursorPosition}
+              />
+            ))}
+          </ClippedContentGroup>
         </Layer>
       </Stage>
 
       {hoveredPoint && (
-        <div
-          className="plotter-tooltip"
-          style={{
-            display: "block",
-            left: cursorPosition.x + 15,
-            top: cursorPosition.y - 10,
-          }}
-        >
-          <div className="tooltip-label">{hoveredPoint.label}</div>
-          <div className="tooltip-meta">
-            <span>Interval: {hoveredPoint.meta.interval}s</span>
-            <span>Angle: {hoveredPoint.meta.angle}°</span>
-            <span>Quality: {hoveredPoint.meta.quality}</span>
-          </div>
-        </div>
+        <PointTooltip
+          hoveredPoint={hoveredPoint}
+          cursorPosition={cursorPosition}
+        />
       )}
     </div>
   );
 }
 
-function AxisLines({ xScale, yScale, xExtent, yExtent, margin, innerWidth, innerHeight }) {
-  const tickCount = 5;
-  const axisElements = [];
+function ClippedContentGroup({
+  innerWidth,
+  innerHeight,
+  contentOffset,
+  contentScale,
+  draggableGroupRef,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  children,
+}) {
+  const plotLeft = PLOT_MARGIN.left;
+  const plotTop = PLOT_MARGIN.top;
 
-  for (let i = 0; i <= tickCount; i++) {
-    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / tickCount);
-    const xPosition = xScale(xValue) + margin.left;
+  const clipFunction = (ctx) => {
+    ctx.rect(plotLeft, plotTop, innerWidth, innerHeight);
+  };
 
-    axisElements.push(
-      <Line
-        key={`xgrid-${i}`}
-        points={[xPosition, margin.top, xPosition, margin.top + innerHeight]}
-        stroke="#2a2a3e"
-        strokeWidth={1}
-        dash={[3, 3]}
-      />
-    );
-
-    axisElements.push(
-      <Text
-        key={`xlabel-${i}`}
-        text={Math.round(xValue).toString()}
-        x={xPosition - 10}
-        y={margin.top + innerHeight + 5}
-        fill="#888"
-        fontSize={11}
-      />
-    );
-  }
-
-  for (let i = 0; i <= tickCount; i++) {
-    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / tickCount);
-    const yPosition = yScale(yValue) + margin.top;
-
-    axisElements.push(
-      <Line
-        key={`ygrid-${i}`}
-        points={[margin.left, yPosition, margin.left + innerWidth, yPosition]}
-        stroke="#2a2a3e"
-        strokeWidth={1}
-        dash={[3, 3]}
-      />
-    );
-
-    axisElements.push(
-      <Text
-        key={`ylabel-${i}`}
-        text={Math.round(yValue).toString()}
-        x={margin.left - 30}
-        y={yPosition - 6}
-        fill="#888"
-        fontSize={11}
-      />
-    );
-  }
-
-  return <>{axisElements}</>;
+  return (
+    <Group clipFunc={clipFunction}>
+      <Group
+        ref={draggableGroupRef}
+        x={plotLeft + contentOffset.x}
+        y={plotTop + contentOffset.y}
+        scaleX={contentScale}
+        scaleY={contentScale}
+        draggable
+        onDragStart={onDragStart}
+        onDragMove={onDragMove}
+        onDragEnd={onDragEnd}
+      >
+        {/* Invisible hit area so drag works from any empty space in the plot */}
+        <Rect
+          x={0}
+          y={0}
+          width={innerWidth}
+          height={innerHeight}
+          fill="transparent"
+          listening={true}
+        />
+        {children}
+      </Group>
+    </Group>
+  );
 }
 
-function ImagePointGroup({ point, xScale, yScale, margin, imageCount, onHover, onCursorMove }) {
-  const centerX = xScale(point.x) + margin.left;
-  const centerY = yScale(point.y) + margin.top;
+function PointTooltip({ hoveredPoint, cursorPosition }) {
+  return (
+    <div
+      className="plotter-tooltip"
+      style={{
+        display: "block",
+        position: "absolute",
+        left: cursorPosition.x + 15,
+        top: cursorPosition.y - 10,
+        pointerEvents: "none",
+      }}
+    >
+      <div className="tooltip-label">{hoveredPoint.label}</div>
+      <div className="tooltip-meta">
+        <span>Interval: {hoveredPoint.meta.interval}s</span>
+        <span>Angle: {hoveredPoint.meta.angle}°</span>
+        <span>Quality: {hoveredPoint.meta.quality}</span>
+      </div>
+    </div>
+  );
+}
+
+function PlotBackground({ innerWidth, innerHeight }) {
+  return (
+    <Rect
+      x={PLOT_MARGIN.left}
+      y={PLOT_MARGIN.top}
+      width={innerWidth}
+      height={innerHeight}
+      fill="#16213e"
+    />
+  );
+}
+
+function AxisBorder({ innerWidth, innerHeight }) {
+  return (
+    <Rect
+      x={PLOT_MARGIN.left}
+      y={PLOT_MARGIN.top}
+      width={innerWidth}
+      height={innerHeight}
+      stroke={AXIS_LINE_COLOR}
+      strokeWidth={1}
+      listening={false}
+    />
+  );
+}
+
+function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
+  const xTicks = buildTicks(visibleDomain.xMin, visibleDomain.xMax, AXIS_TICK_COUNT);
+  const yTicks = buildTicks(visibleDomain.yMin, visibleDomain.yMax, AXIS_TICK_COUNT);
+
+  const xScreenScale = buildLinearScale(visibleDomain.xMin, visibleDomain.xMax, 0, innerWidth);
+  const yScreenScale = buildLinearScale(visibleDomain.yMin, visibleDomain.yMax, innerHeight, 0);
+
+  const gridLines = [];
+
+  xTicks.forEach((value, index) => {
+    const xPos = PLOT_MARGIN.left + xScreenScale(value);
+    if (xPos < PLOT_MARGIN.left || xPos > PLOT_MARGIN.left + innerWidth) return;
+    gridLines.push(
+      <Line
+        key={`xgrid-${index}`}
+        points={[xPos, PLOT_MARGIN.top, xPos, PLOT_MARGIN.top + innerHeight]}
+        stroke={GRID_COLOR}
+        strokeWidth={1}
+        dash={[4, 4]}
+        listening={false}
+      />
+    );
+  });
+
+  yTicks.forEach((value, index) => {
+    const yPos = PLOT_MARGIN.top + yScreenScale(value);
+    if (yPos < PLOT_MARGIN.top || yPos > PLOT_MARGIN.top + innerHeight) return;
+    gridLines.push(
+      <Line
+        key={`ygrid-${index}`}
+        points={[PLOT_MARGIN.left, yPos, PLOT_MARGIN.left + innerWidth, yPos]}
+        stroke={GRID_COLOR}
+        strokeWidth={1}
+        dash={[4, 4]}
+        listening={false}
+      />
+    );
+  });
+
+  return <>{gridLines}</>;
+}
+
+function AxisLabels({ visibleDomain, innerWidth, innerHeight }) {
+  const xTicks = buildTicks(visibleDomain.xMin, visibleDomain.xMax, AXIS_TICK_COUNT);
+  const yTicks = buildTicks(visibleDomain.yMin, visibleDomain.yMax, AXIS_TICK_COUNT);
+
+  const xScreenScale = buildLinearScale(visibleDomain.xMin, visibleDomain.xMax, 0, innerWidth);
+  const yScreenScale = buildLinearScale(visibleDomain.yMin, visibleDomain.yMax, innerHeight, 0);
+
+  const tickLabels = [];
+
+  xTicks.forEach((value, index) => {
+    const xPos = PLOT_MARGIN.left + xScreenScale(value);
+    if (xPos < PLOT_MARGIN.left - 5 || xPos > PLOT_MARGIN.left + innerWidth + 5) return;
+    tickLabels.push(
+      <Text
+        key={`xlabel-${index}`}
+        text={formatTickLabel(value)}
+        x={xPos - 14}
+        y={PLOT_MARGIN.top + innerHeight + 6}
+        fill={TICK_LABEL_COLOR}
+        fontSize={TICK_LABEL_FONT_SIZE}
+        listening={false}
+      />
+    );
+  });
+
+  yTicks.forEach((value, index) => {
+    const yPos = PLOT_MARGIN.top + yScreenScale(value);
+    if (yPos < PLOT_MARGIN.top - 5 || yPos > PLOT_MARGIN.top + innerHeight + 5) return;
+    tickLabels.push(
+      <Text
+        key={`ylabel-${index}`}
+        text={formatTickLabel(value)}
+        x={PLOT_MARGIN.left - 36}
+        y={yPos - 6}
+        fill={TICK_LABEL_COLOR}
+        fontSize={TICK_LABEL_FONT_SIZE}
+        width={32}
+        align="right"
+        listening={false}
+      />
+    );
+  });
+
+  return <>{tickLabels}</>;
+}
+
+function ImagePointGroup({ point, xScale, yScale, imageCount, onHover, onCursorMove }) {
+  const centerX = xScale(point.x);
+  const centerY = yScale(point.y);
   const positions = computeImagePositions(centerX, centerY, CELL_SIZE, CELL_SIZE, imageCount);
 
   return (
@@ -1491,24 +1513,21 @@ function KonvaImageFromUrl({ imageUrl, x, y, width, height, point, onHover, onCu
     const htmlImage = new window.Image();
     htmlImage.crossOrigin = "anonymous";
     htmlImage.src = imageUrl;
-
     htmlImage.onload = () => setLoadedImage(htmlImage);
-
-    return () => {
-      htmlImage.onload = null;
-    };
+    return () => { htmlImage.onload = null; };
   }, [imageUrl]);
 
-  const handleMouseEnter = useCallback((event) => {
-    const stage = event.target.getStage();
-    const pointerPosition = stage.getPointerPosition();
-    onCursorMove({ x: pointerPosition.x, y: pointerPosition.y });
-    onHover(point);
-  }, [point, onHover, onCursorMove]);
+  const handleMouseEnter = useCallback(
+    (event) => {
+      const stage = event.target.getStage();
+      const pointer = stage.getPointerPosition();
+      onCursorMove({ x: pointer.x, y: pointer.y });
+      onHover(point);
+    },
+    [point, onHover, onCursorMove]
+  );
 
-  const handleMouseLeave = useCallback(() => {
-    onHover(null);
-  }, [onHover]);
+  const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
 
   if (!loadedImage) return null;
 
@@ -1525,35 +1544,115 @@ function KonvaImageFromUrl({ imageUrl, x, y, width, height, point, onHover, onCu
   );
 }
 
-function computeScales(plotterPoints, innerWidth, innerHeight, xGap, yGap) {
-  const xValues = plotterPoints.map((point) => point.x);
-  const yValues = plotterPoints.map((point) => point.y);
+/* ─── Pure utility functions ──────────────────────────────────────────── */
+
+function isPointerInsidePlotArea(pointerPosition, plotInnerWidth, plotInnerHeight) {
+  return (
+    pointerPosition.x > PLOT_MARGIN.left &&
+    pointerPosition.x < PLOT_MARGIN.left + plotInnerWidth &&
+    pointerPosition.y > PLOT_MARGIN.top &&
+    pointerPosition.y < PLOT_MARGIN.top + plotInnerHeight
+  );
+}
+
+function clampScale(rawScale) {
+  return Math.max(ZOOM_MIN, Math.min(rawScale, ZOOM_MAX));
+}
+
+function computeWheelScaleDelta(deltaY, isPinchGesture) {
+  if (isPinchGesture) {
+    return Math.exp(-deltaY * PINCH_ZOOM_SENSITIVITY);
+  }
+  return deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+}
+
+function clampContentOffset(rawX, rawY, scale, plotInnerWidth, plotInnerHeight) {
+  const scaledWidth = plotInnerWidth * scale;
+  const scaledHeight = plotInnerHeight * scale;
+
+  let clampedX = rawX;
+  let clampedY = rawY;
+
+  if (scaledWidth <= plotInnerWidth) {
+    clampedX = (plotInnerWidth - scaledWidth) / 2;
+  } else {
+    const minX = plotInnerWidth - scaledWidth;
+    const maxX = 0;
+    clampedX = Math.max(minX, Math.min(rawX, maxX));
+  }
+
+  if (scaledHeight <= plotInnerHeight) {
+    clampedY = (plotInnerHeight - scaledHeight) / 2;
+  } else {
+    const minY = plotInnerHeight - scaledHeight;
+    const maxY = 0;
+    clampedY = Math.max(minY, Math.min(rawY, maxY));
+  }
+
+  return { x: clampedX, y: clampedY };
+}
+
+function buildScales(plotterPoints, plotInnerWidth, plotInnerHeight) {
+  const xValues = plotterPoints.map((p) => p.x);
+  const yValues = plotterPoints.map((p) => p.y);
 
   const xMin = Math.min(...xValues);
   const xMax = Math.max(...xValues);
   const yMin = Math.min(...yValues);
   const yMax = Math.max(...yValues);
 
-  const xPadding = (xMax - xMin) * 0.15 || 5;
-  const yPadding = (yMax - yMin) * 0.15 || 5;
+  const xPadding = (xMax - xMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
+  const yPadding = (yMax - yMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
 
   const xExtent = [xMin - xPadding, xMax + xPadding];
   const yExtent = [yMin - yPadding, yMax + yPadding];
 
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
-
-  const xScale = (value) => {
-    const ratio = (value - xExtent[0]) / (xExtent[1] - xExtent[0]);
-    return ratio * innerWidth * xSpacingScale;
-  };
-
-  const yScale = (value) => {
-    const ratio = (value - yExtent[0]) / (yExtent[1] - yExtent[0]);
-    return innerHeight * ySpacingScale - ratio * innerHeight * ySpacingScale;
-  };
+  const xScale = buildLinearScale(xExtent[0], xExtent[1], 0, plotInnerWidth);
+  const yScale = buildLinearScale(yExtent[0], yExtent[1], plotInnerHeight, 0);
 
   return { xScale, yScale, xExtent, yExtent };
+}
+
+function computeVisibleDomain(xExtent, yExtent, contentOffset, scale, plotInnerWidth, plotInnerHeight) {
+  const domainWidth = xExtent[1] - xExtent[0];
+  const domainHeight = yExtent[1] - yExtent[0];
+
+  const xMin = xExtent[0] - (contentOffset.x / scale / plotInnerWidth) * domainWidth;
+  const xMax = xMin + domainWidth / scale;
+
+  const yMax = yExtent[1] + (contentOffset.y / scale / plotInnerHeight) * domainHeight;
+  const yMin = yMax - domainHeight / scale;
+
+  return { xMin, xMax, yMin, yMax };
+}
+
+function buildLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
+  return (value) => {
+    const ratio = (value - domainMin) / (domainMax - domainMin);
+    return rangeMin + ratio * (rangeMax - rangeMin);
+  };
+}
+
+function buildTicks(min, max, count) {
+  const rawStep = (max - min) / count;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const niceSteps = [1, 2, 2.5, 5, 10];
+  const step = niceSteps.map((s) => s * magnitude).find((s) => s >= rawStep) ?? rawStep;
+
+  const start = Math.ceil(min / step) * step;
+  const ticks = [];
+
+  for (let tick = start; tick <= max + step * 0.001; tick += step) {
+    ticks.push(parseFloat(tick.toPrecision(10)));
+  }
+
+  return ticks;
+}
+
+function formatTickLabel(value) {
+  if (Math.abs(value) >= 1000) return value.toExponential(1);
+  const formattedString = value.toPrecision(4);
+  return parseFloat(formattedString).toString();
 }
 
 export default KonvaPlotter;
@@ -1593,11 +1692,30 @@ export default Navbar;
 
 ```jsx
 import { useRef, useEffect, useState, useCallback } from "react";
-import { Application as PixiApp, Sprite, Container, Text as PixiText } from "pixi.js";
+import {
+  Application as PixiApp,
+  Sprite,
+  Container,
+  Text as PixiText,
+  Graphics,
+  Assets,
+} from "pixi.js";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+
+const AXIS_TICK_COUNT = 5;
+const TICK_LABEL_COLOR = "#888888";
+const TICK_LABEL_SIZE = 11;
+const GRID_COLOR = 0x333333;
+const GRID_ALPHA = 0.6;
+const AXIS_BORDER_COLOR = 0x555555;
+const EXTENT_PADDING_RATIO = 0.2;
+const EXTENT_FALLBACK_PADDING = 5;
+const ZOOM_STEP = 1.5;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 10;
 
 function PixiPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
@@ -1606,85 +1724,113 @@ function PixiPlotter({ imageCount, xGap, yGap }) {
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
-    <PixiCanvas plotterPoints={plotterPoints} imageCount={imageCount} xGap={xGap} yGap={yGap} />
+    <PixiCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      xGap={xGap}
+      yGap={yGap}
+    />
   );
 }
 
 function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const canvasContainerRef = useRef(null);
   const pixiAppRef = useRef(null);
-  const contentContainerRef = useRef(null);
-  const axesContainerRef = useRef(null);
+  const contentLayerRef = useRef(null);
+  const axesLayerRef = useRef(null);
   const tooltipRef = useRef(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const panOffsetRef = useRef({ x: 0, y: 0 });
   const scaleRef = useRef(1);
+  const panOffsetRef = useRef({ x: 0, y: 0 });
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false);
 
-  const margin = PLOT_MARGIN;
-  const innerWidth = PLOT_DIMENSIONS.width - margin.left - margin.right;
-  const innerHeight = PLOT_DIMENSIONS.height - margin.top - margin.bottom;
-
-  const initializePixiApp = useCallback(async () => {
-    if (!canvasContainerRef.current || pixiAppRef.current) return;
-
-    const pixiApplication = new PixiApp();
-    await pixiApplication.init({
-      width: PLOT_DIMENSIONS.width,
-      height: PLOT_DIMENSIONS.height,
-      background: 0x16213e,
-      antialias: true,
-    });
-
-    canvasContainerRef.current.appendChild(pixiApplication.canvas);
-    pixiAppRef.current = pixiApplication;
-
-    const axesGroup = new Container();
-    axesGroup.x = margin.left;
-    axesGroup.y = margin.top;
-    pixiApplication.stage.addChild(axesGroup);
-    axesContainerRef.current = axesGroup;
-
-    const contentGroup = new Container();
-    contentGroup.x = margin.left;
-    contentGroup.y = margin.top;
-    pixiApplication.stage.addChild(contentGroup);
-    contentContainerRef.current = contentGroup;
-  }, []);
+  const innerWidth = PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+  const innerHeight = PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
   useEffect(() => {
-    initializePixiApp();
+    let cancelled = false;
+
+    async function bootstrapPixi() {
+      if (!canvasContainerRef.current || pixiAppRef.current) return;
+
+      const pixiApplication = new PixiApp();
+      await pixiApplication.init({
+        width: PLOT_DIMENSIONS.width,
+        height: PLOT_DIMENSIONS.height,
+        background: 0x16213e,
+        antialias: true,
+      });
+
+      if (cancelled) {
+        pixiApplication.destroy(true);
+        return;
+      }
+
+      canvasContainerRef.current.appendChild(pixiApplication.canvas);
+      pixiAppRef.current = pixiApplication;
+
+      const axesLayer = new Container();
+      axesLayer.x = PLOT_MARGIN.left;
+      axesLayer.y = PLOT_MARGIN.top;
+      pixiApplication.stage.addChild(axesLayer);
+      axesLayerRef.current = axesLayer;
+
+      const contentLayer = new Container();
+      contentLayer.x = PLOT_MARGIN.left;
+      contentLayer.y = PLOT_MARGIN.top;
+      pixiApplication.stage.addChild(contentLayer);
+      contentLayerRef.current = contentLayer;
+
+      setIsAppReady(true);
+    }
+
+    bootstrapPixi();
 
     return () => {
+      cancelled = true;
       if (pixiAppRef.current) {
         pixiAppRef.current.destroy(true);
         pixiAppRef.current = null;
-        contentContainerRef.current = null;
+        contentLayerRef.current = null;
+        axesLayerRef.current = null;
+        setIsAppReady(false);
       }
     };
-  }, [initializePixiApp]);
+  }, []);
 
   useEffect(() => {
-    if (!pixiAppRef.current || !contentContainerRef.current || !axesContainerRef.current) return;
+    if (!isAppReady || !contentLayerRef.current || !axesLayerRef.current) return;
+    if (plotterPoints.length === 0) return;
 
-    const contentGroup = contentContainerRef.current;
-    const axesGroup = axesContainerRef.current;
-    contentGroup.removeChildren();
-    axesGroup.removeChildren();
+    contentLayerRef.current.removeChildren();
+    axesLayerRef.current.removeChildren();
 
-    renderPoints(pixiAppRef.current, contentGroup, axesGroup, plotterPoints, imageCount, innerWidth, innerHeight, tooltipRef, xGap, yGap);
-  }, [plotterPoints, imageCount, innerWidth, innerHeight, xGap, yGap]);
+    const xExtent = computeExtent(plotterPoints, "x");
+    const yExtent = computeExtent(plotterPoints, "y");
+
+    const xScale = buildLinearScale(xExtent[0], xExtent[1], 0, innerWidth);
+    const yScale = buildLinearScale(yExtent[0], yExtent[1], innerHeight, 0);
+
+    drawGrid(axesLayerRef.current, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight);
+    drawAxesLabels(axesLayerRef.current, xScale, yScale, xExtent, yExtent, innerHeight);
+
+    const uniqueImageUrls = [...new Set(plotterPoints.map((point) => point.image))];
+
+    Assets.load(uniqueImageUrls).then(() => {
+      if (!contentLayerRef.current) return;
+      drawDataPoints(contentLayerRef.current, plotterPoints, xScale, yScale, imageCount, tooltipRef);
+    });
+  }, [isAppReady, plotterPoints, imageCount, xGap, yGap, innerWidth, innerHeight]);
 
   const handleWheel = useCallback((event) => {
     event.preventDefault();
-    if (!contentContainerRef.current) return;
+    if (!contentLayerRef.current) return;
 
-    const scaleDelta = event.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.3, Math.min(scaleRef.current * scaleDelta, 10));
+    const scaleDelta = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+    const newScale = Math.max(ZOOM_MIN, Math.min(scaleRef.current * scaleDelta, ZOOM_MAX));
     scaleRef.current = newScale;
-
-    const contentGroup = contentContainerRef.current;
-    contentGroup.scale.set(newScale);
+    contentLayerRef.current.scale.set(newScale);
   }, []);
 
   const handleMouseDown = useCallback((event) => {
@@ -1695,42 +1841,43 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     };
   }, []);
 
-  const handleMouseMove = useCallback((event) => {
-    if (!isDragging || !contentContainerRef.current) return;
+  const handleMouseMove = useCallback(
+    (event) => {
+      if (!isDragging || !contentLayerRef.current) return;
 
-    const newOffsetX = event.clientX - dragStartRef.current.x;
-    const newOffsetY = event.clientY - dragStartRef.current.y;
-    panOffsetRef.current = { x: newOffsetX, y: newOffsetY };
+      const newOffsetX = event.clientX - dragStartRef.current.x;
+      const newOffsetY = event.clientY - dragStartRef.current.y;
+      panOffsetRef.current = { x: newOffsetX, y: newOffsetY };
 
-    contentContainerRef.current.x = margin.left + newOffsetX;
-    contentContainerRef.current.y = margin.top + newOffsetY;
-  }, [isDragging, margin.left, margin.top]);
+      contentLayerRef.current.x = PLOT_MARGIN.left + newOffsetX;
+      contentLayerRef.current.y = PLOT_MARGIN.top + newOffsetY;
+    },
+    [isDragging]
+  );
 
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+
+  const handleZoomIn = useCallback(() => {
+    const newScale = Math.min(scaleRef.current * ZOOM_STEP, ZOOM_MAX);
+    scaleRef.current = newScale;
+    if (contentLayerRef.current) contentLayerRef.current.scale.set(newScale);
   }, []);
 
-  const handleZoomIn = () => {
-    const newScale = Math.min(scaleRef.current * 1.5, 10);
+  const handleZoomOut = useCallback(() => {
+    const newScale = Math.max(scaleRef.current / ZOOM_STEP, ZOOM_MIN);
     scaleRef.current = newScale;
-    if (contentContainerRef.current) contentContainerRef.current.scale.set(newScale);
-  };
+    if (contentLayerRef.current) contentLayerRef.current.scale.set(newScale);
+  }, []);
 
-  const handleZoomOut = () => {
-    const newScale = Math.max(scaleRef.current / 1.5, 0.3);
-    scaleRef.current = newScale;
-    if (contentContainerRef.current) contentContainerRef.current.scale.set(newScale);
-  };
-
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     scaleRef.current = 1;
     panOffsetRef.current = { x: 0, y: 0 };
-    if (contentContainerRef.current) {
-      contentContainerRef.current.scale.set(1);
-      contentContainerRef.current.x = margin.left;
-      contentContainerRef.current.y = margin.top;
+    if (contentLayerRef.current) {
+      contentLayerRef.current.scale.set(1);
+      contentLayerRef.current.x = PLOT_MARGIN.left;
+      contentLayerRef.current.y = PLOT_MARGIN.top;
     }
-  };
+  }, []);
 
   return (
     <div style={{ position: "relative" }}>
@@ -1751,24 +1898,68 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       <div
         ref={tooltipRef}
         className="plotter-tooltip"
-        style={{ display: "none" }}
+        style={{ display: "none", position: "absolute", pointerEvents: "none" }}
       />
     </div>
   );
 }
 
-function renderPoints(pixiApplication, contentGroup, axesGroup, plotterPoints, imageCount, innerWidth, innerHeight, tooltipRef, xGap, yGap) {
-  const xExtent = getExtent(plotterPoints, "x");
-  const yExtent = getExtent(plotterPoints, "y");
+function drawGrid(axesLayer, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight) {
+  const grid = new Graphics();
 
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
-  
-  const xScale = createLinearScale(xExtent[0], xExtent[1], 0, innerWidth * xSpacingScale);
-  const yScale = createLinearScale(yExtent[0], yExtent[1], innerHeight * ySpacingScale, 0);
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / AXIS_TICK_COUNT);
+    const xPos = xScale(xValue);
+    grid.moveTo(xPos, 0);
+    grid.lineTo(xPos, innerHeight);
+  }
 
-  renderAxisLabels(axesGroup, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight);
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / AXIS_TICK_COUNT);
+    const yPos = yScale(yValue);
+    grid.moveTo(0, yPos);
+    grid.lineTo(innerWidth, yPos);
+  }
 
+  grid.stroke({ width: 1, color: GRID_COLOR, alpha: GRID_ALPHA });
+
+  const border = new Graphics();
+  border.rect(0, 0, innerWidth, innerHeight);
+  border.stroke({ width: 1, color: AXIS_BORDER_COLOR });
+
+  axesLayer.addChild(grid);
+  axesLayer.addChild(border);
+}
+
+function drawAxesLabels(axesLayer, xScale, yScale, xExtent, yExtent, innerHeight) {
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / AXIS_TICK_COUNT);
+    const xPos = xScale(xValue);
+
+    const xLabel = new PixiText({
+      text: Math.round(xValue).toString(),
+      style: { fill: TICK_LABEL_COLOR, fontSize: TICK_LABEL_SIZE },
+    });
+    xLabel.x = xPos - xLabel.width / 2;
+    xLabel.y = innerHeight + 6;
+    axesLayer.addChild(xLabel);
+  }
+
+  for (let i = 0; i <= AXIS_TICK_COUNT; i++) {
+    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / AXIS_TICK_COUNT);
+    const yPos = yScale(yValue);
+
+    const yLabel = new PixiText({
+      text: Math.round(yValue).toString(),
+      style: { fill: TICK_LABEL_COLOR, fontSize: TICK_LABEL_SIZE },
+    });
+    yLabel.x = -yLabel.width - 6;
+    yLabel.y = yPos - yLabel.height / 2;
+    axesLayer.addChild(yLabel);
+  }
+}
+
+function drawDataPoints(contentLayer, plotterPoints, xScale, yScale, imageCount, tooltipRef) {
   plotterPoints.forEach((point) => {
     const centerX = xScale(point.x);
     const centerY = yScale(point.y);
@@ -1783,58 +1974,23 @@ function renderPoints(pixiApplication, contentGroup, axesGroup, plotterPoints, i
       sprite.eventMode = "static";
       sprite.cursor = "pointer";
 
-      sprite.on("pointerenter", (event) => {
-        showPixiTooltip(tooltipRef.current, event, point);
-      });
-      sprite.on("pointerleave", () => {
-        hidePixiTooltip(tooltipRef.current);
-      });
+      sprite.on("pointerenter", (event) => showPixiTooltip(tooltipRef.current, event, point));
+      sprite.on("pointerleave", () => hidePixiTooltip(tooltipRef.current));
 
-      contentGroup.addChild(sprite);
+      contentLayer.addChild(sprite);
     });
   });
 }
 
-function renderAxisLabels(contentGroup, xScale, yScale, xExtent, yExtent, innerWidth, innerHeight) {
-  const tickCount = 5;
-
-  for (let i = 0; i <= tickCount; i++) {
-    const xValue = xExtent[0] + (xExtent[1] - xExtent[0]) * (i / tickCount);
-    const xPosition = xScale(xValue);
-
-    const xLabel = new PixiText({
-      text: Math.round(xValue).toString(),
-      style: { fill: "#888", fontSize: 11 },
-    });
-    xLabel.x = xPosition - xLabel.width / 2;
-    xLabel.y = innerHeight + 5;
-    contentGroup.addChild(xLabel);
-  }
-
-  for (let i = 0; i <= tickCount; i++) {
-    const yValue = yExtent[0] + (yExtent[1] - yExtent[0]) * (i / tickCount);
-    const yPosition = yScale(yValue);
-
-    const yLabel = new PixiText({
-      text: Math.round(yValue).toString(),
-      style: { fill: "#888", fontSize: 11 },
-    });
-    yLabel.x = -yLabel.width - 5;
-    yLabel.y = yPosition - yLabel.height / 2;
-    contentGroup.addChild(yLabel);
-  }
-}
-
-function getExtent(dataPoints, key) {
+function computeExtent(dataPoints, key) {
   const values = dataPoints.map((point) => point[key]);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const padding = (max - min) * 0.15 || 5;
-
+  const padding = (max - min) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
   return [min - padding, max + padding];
 }
 
-function createLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
+function buildLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
   return (value) => {
     const ratio = (value - domainMin) / (domainMax - domainMin);
     return rangeMin + ratio * (rangeMax - rangeMin);
@@ -1844,6 +2000,12 @@ function createLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
 function showPixiTooltip(tooltipElement, event, point) {
   if (!tooltipElement) return;
 
+  const globalPosition = event.global ?? event.data?.global;
+  if (globalPosition) {
+    tooltipElement.style.left = `${globalPosition.x + 15}px`;
+    tooltipElement.style.top = `${globalPosition.y - 10}px`;
+  }
+
   tooltipElement.style.display = "block";
   tooltipElement.innerHTML =
     `<div class="tooltip-label">${point.label}</div>` +
@@ -1852,12 +2014,6 @@ function showPixiTooltip(tooltipElement, event, point) {
     `<span>Angle: ${point.meta.angle}°</span>` +
     `<span>Quality: ${point.meta.quality}</span>` +
     `</div>`;
-
-  const globalPosition = event.global || event.data?.global;
-  if (globalPosition) {
-    tooltipElement.style.left = `${globalPosition.x + 15}px`;
-    tooltipElement.style.top = `${globalPosition.y - 10}px`;
-  }
 }
 
 function hidePixiTooltip(tooltipElement) {
@@ -1896,7 +2052,7 @@ export default function PlotterControls({ onZoomIn, onZoomOut, onReset, zoomLeve
 # src\components\RechartsPlotter.jsx
 
 ```jsx
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   ScatterChart,
   Scatter,
@@ -1908,12 +2064,30 @@ import {
 } from "recharts";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
-import { CELL_SIZE } from "../lib/constants";
+import { CELL_SIZE, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+
+const ZOOM_STEP = 1.5;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 8;
+const DOMAIN_PADDING_UNITS = 1;
+const CLIP_PATH_ID = "recharts-plot-clip";
 
 function RechartsPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
   const [zoomLevel, setZoomLevel] = useState(1);
+
+  const handleZoomIn = useCallback(
+    () => setZoomLevel((prev) => Math.min(prev * ZOOM_STEP, ZOOM_MAX)),
+    []
+  );
+
+  const handleZoomOut = useCallback(
+    () => setZoomLevel((prev) => Math.max(prev / ZOOM_STEP, ZOOM_MIN)),
+    []
+  );
+
+  const handleReset = useCallback(() => setZoomLevel(1), []);
 
   if (isLoading) return <div className="plotter-loading">Loading data…</div>;
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
@@ -1922,9 +2096,9 @@ function RechartsPlotter({ imageCount, xGap, yGap }) {
     <div>
       <PlotterControls
         zoomLevel={zoomLevel}
-        onZoomIn={() => setZoomLevel((prev) => Math.min(prev * 1.5, 5))}
-        onZoomOut={() => setZoomLevel((prev) => Math.max(prev / 1.5, 0.3))}
-        onReset={() => setZoomLevel(1)}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onReset={handleReset}
       />
       <PlotArea
         plotterPoints={plotterPoints}
@@ -1937,37 +2111,35 @@ function RechartsPlotter({ imageCount, xGap, yGap }) {
   );
 }
 
+function buildAxisDomain(values, zoomLevel, padding) {
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+  const center = (dataMin + dataMax) / 2;
+  const halfSpan = ((dataMax - dataMin) / 2 + padding) / zoomLevel;
+  return [center - halfSpan, center + halfSpan];
+}
+
 function PlotArea({ plotterPoints, imageCount, zoomLevel, xGap, yGap }) {
+  const containerRef = useRef(null);
   const xValues = plotterPoints.map((point) => point.x);
   const yValues = plotterPoints.map((point) => point.y);
-  const xPadding = 10 / zoomLevel;
-  const yPadding = 10 / zoomLevel;
 
-  const xMin = Math.min(...xValues) - xPadding;
-  const xMax = Math.max(...xValues) + xPadding;
-  const yMin = Math.min(...yValues) - yPadding;
-  const yMax = Math.max(...yValues) + yPadding;
-
-  const xCenter = (xMax + xMin) / 2;
-  const yCenter = (yMax + yMin) / 2;
-
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
-
-  const xRange = (xMax - xMin) / zoomLevel / xSpacingScale;
-  const yRange = (yMax - yMin) / zoomLevel / ySpacingScale;
-
-  const domainX = [xCenter - xRange / 2, xCenter + xRange / 2];
-  const domainY = [yCenter - yRange / 2, yCenter + yRange / 2];
+  const domainX = buildAxisDomain(xValues, zoomLevel, DOMAIN_PADDING_UNITS);
+  const domainY = buildAxisDomain(yValues, zoomLevel, DOMAIN_PADDING_UNITS);
 
   const renderCustomShape = useCallback(
     (shapeProps) => {
       const { cx, cy, payload } = shapeProps;
-      const cellSize = CELL_SIZE * Math.min(zoomLevel, 2);
-      const positions = computeImagePositions(cx, cy, cellSize, cellSize, imageCount, xGap, yGap);
+      const positions = computeImagePositions(
+        cx,
+        cy,
+        CELL_SIZE,
+        CELL_SIZE,
+        imageCount
+      );
 
       return (
-        <g>
+        <g clipPath={`url(#${CLIP_PATH_ID})`}>
           {positions.map((position, index) => (
             <image
               key={`${payload.id}-${index}`}
@@ -1982,37 +2154,51 @@ function PlotArea({ plotterPoints, imageCount, zoomLevel, xGap, yGap }) {
         </g>
       );
     },
-    [imageCount, zoomLevel, xGap, yGap]
+    [imageCount]
   );
 
+  const chartHeight = 500;
+  const plotWidth =
+    (containerRef.current?.offsetWidth ?? 900) -
+    PLOT_MARGIN.left -
+    PLOT_MARGIN.right;
+  const plotHeight = chartHeight - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+
   return (
-    <ResponsiveContainer width="100%" height={500}>
-      <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis
-          type="number"
-          dataKey="x"
-          domain={domainX}
-          tick={{ fill: "#888", fontSize: 12 }}
-          stroke="#555"
-          name="X"
-        />
-        <YAxis
-          type="number"
-          dataKey="y"
-          domain={domainY}
-          tick={{ fill: "#888", fontSize: 12 }}
-          stroke="#555"
-          name="Y"
-        />
-        <Tooltip content={<MetadataTooltip />} />
-        <Scatter
-          key={`scatter-${imageCount}-${zoomLevel}-${xGap}-${yGap}`}
-          data={plotterPoints}
-          shape={renderCustomShape}
-        />
-      </ScatterChart>
-    </ResponsiveContainer>
+    <div ref={containerRef}>
+      <ResponsiveContainer width="100%" height={chartHeight}>
+        <ScatterChart margin={PLOT_MARGIN}>
+          <defs>
+            <clipPath id={CLIP_PATH_ID}>
+              <rect x={0} y={0} width={plotWidth} height={plotHeight} />
+            </clipPath>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          <XAxis
+            type="number"
+            dataKey="x"
+            domain={domainX}
+            tick={{ fill: "#888", fontSize: 12 }}
+            stroke="#555"
+            name="X"
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            domain={domainY}
+            tick={{ fill: "#888", fontSize: 12 }}
+            stroke="#555"
+            name="Y"
+          />
+          <Tooltip content={<MetadataTooltip />} />
+          <Scatter
+            key={`scatter-${imageCount}-${zoomLevel}-${xGap}-${yGap}`}
+            data={plotterPoints}
+            shape={renderCustomShape}
+          />
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 

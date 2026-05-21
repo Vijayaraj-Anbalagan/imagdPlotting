@@ -35,7 +35,8 @@ const IGNORE_FILES = [
   "vite.config.js",
   "eslint.config.js",
   ".gitignore",
-
+  "index.html",
+  "App.css",
   // optional
   "README.md",
 ];
@@ -57,6 +58,8 @@ const IGNORE_EXTENSIONS = [
   ".eot",
   ".map",
   ".lock",
+  ".css",
+  ".html",
 ];
 
 // include only these source code extensions
@@ -65,11 +68,9 @@ const ALLOWED_EXTENSIONS = [
   ".jsx",
   ".ts",
   ".tsx",
-  ".css",
   ".scss",
   ".json",
   ".md",
-  ".html",
 ];
 
 /**
