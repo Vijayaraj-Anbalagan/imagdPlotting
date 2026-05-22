@@ -1,225 +1,501 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+
 import DeckGL from "@deck.gl/react";
 import { OrthographicView } from "@deck.gl/core";
-import { IconLayer, LineLayer, TextLayer } from "@deck.gl/layers";
+import { IconLayer } from "@deck.gl/layers";
+
+import * as d3 from "d3";
+
 import { usePlotterData } from "../lib/plotterData";
-import { computeImagePositions } from "../lib/gridLayout";
-import { CELL_SIZE } from "../lib/constants";
+import { PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
+
 import PlotterControls from "./PlotterControls";
 
-const INITIAL_VIEW_STATE = {
-  target: [15, 22, 0],
-  zoom: 3,
-  minZoom: -2,
-  maxZoom: 10,
-};
-
-const ORTHOGRAPHIC_VIEW = new OrthographicView({
-  id: "ortho-view",
-  flipY: false,
+const VIEW = new OrthographicView({
+  id: "orthographic-view",
+  flipY: true,
 });
+
+const IMAGE_SIZE = 56;
+
+const ZOOM_MIN = 0;
+const ZOOM_MAX = 4;
 
 function DeckGLPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
 
-  if (isLoading) return <div className="plotter-loading">Loading data…</div>;
-  if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  if (loadError) {
+    return <div>Error: {loadError}</div>;
+  }
 
   return (
-    <DeckGLCanvas plotterPoints={plotterPoints} imageCount={imageCount} xGap={xGap} yGap={yGap} />
+    <DeckGLCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      xGap={xGap}
+      yGap={yGap}
+    />
   );
 }
 
 function DeckGLCanvas({ plotterPoints, imageCount, xGap, yGap }) {
-  const [tooltipInfo, setTooltipInfo] = useState(null);
-  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
+  const containerRef = useRef(null);
 
-  const expandedIconData = useMemo(
-    () => expandDataForMultiImage(plotterPoints, imageCount, xGap, yGap),
-    [plotterPoints, imageCount, xGap, yGap]
-  );
+  const dragRef = useRef({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+  });
 
-  const iconLayer = useMemo(
-    () => createIconLayer(expandedIconData),
-    [expandedIconData]
-  );
+  const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
 
-  const axesLayers = useMemo(
-    () => createAxesLayers(plotterPoints, xGap, yGap),
-    [plotterPoints, xGap, yGap]
-  );
+  const [viewState, setViewState] = useState({
+    zoom: 0,
+    target: [0, 0, 0],
+  });
 
-  const handleHover = useCallback((info) => {
-    if (info.object) {
-      setTooltipInfo({
-        x: info.x,
-        y: info.y,
-        object: info.object,
-      });
-    } else {
-      setTooltipInfo(null);
-    }
+  const [hovered, setHovered] = useState(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0];
+
+      if (rect) {
+        setContainerWidth(rect.contentRect.width);
+      }
+    });
+
+    observer.observe(containerRef.current);
+
+    return () => observer.disconnect();
   }, []);
 
-  const handleZoomIn = () => setViewState((v) => ({ ...v, zoom: Math.min(v.zoom + 1, v.maxZoom) }));
-  const handleZoomOut = () => setViewState((v) => ({ ...v, zoom: Math.max(v.zoom - 1, v.minZoom) }));
-  const handleReset = () => setViewState(INITIAL_VIEW_STATE);
+  const height = PLOT_DIMENSIONS.height;
 
-  return (
-    <div style={{ position: "relative", height: 550, background: "#16213e" }}>
-      <PlotterControls
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onReset={handleReset}
-      />
-      <DeckGL
-        views={ORTHOGRAPHIC_VIEW}
-        viewState={viewState}
-        onViewStateChange={({ viewState }) => setViewState(viewState)}
-        controller
-        layers={[...axesLayers, iconLayer]}
-        onHover={handleHover}
-        style={{ position: "relative", height: "100%" }}
-      />
-      {tooltipInfo && (
-        <DeckGLTooltip tooltipInfo={tooltipInfo} />
-      )}
-    </div>
-  );
-}
+  const innerWidth = containerWidth - PLOT_MARGIN.left - PLOT_MARGIN.right;
 
-function expandDataForMultiImage(plotterPoints, imageCount, xGap, yGap) {
-  const expandedEntries = [];
-  const scaleFactor = 2;
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
+  const innerHeight = height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
-  plotterPoints.forEach((point) => {
-    const cellSize = CELL_SIZE / scaleFactor;
-    const positions = computeImagePositions(
-      point.x * xSpacingScale,
-      point.y * ySpacingScale,
-      cellSize,
-      cellSize,
-      imageCount
-    );
+  const xExtent = useMemo(() => {
+    return d3.extent(plotterPoints, (d) => d.x);
+  }, [plotterPoints]);
 
-    positions.forEach((position, index) => {
-      expandedEntries.push({
-        id: `${point.id}-sub-${index}`,
-        position: [
-          position.x + position.width / 2,
-          position.y + position.height / 2,
-        ],
-        width: position.width,
-        height: position.height,
-        image: point.image,
-        label: point.label,
-        meta: point.meta,
+  const yExtent = useMemo(() => {
+    return d3.extent(plotterPoints, (d) => d.y);
+  }, [plotterPoints]);
+
+  const transformedXScale = useMemo(() => {
+    const scale = Math.pow(2, viewState.zoom);
+
+    return d3
+      .scaleLinear()
+      .domain(xExtent)
+      .range([viewState.target[0], innerWidth * scale + viewState.target[0]]);
+  }, [xExtent, viewState, innerWidth]);
+
+  const transformedYScale = useMemo(() => {
+    const scale = Math.pow(2, viewState.zoom);
+
+    return d3
+      .scaleLinear()
+      .domain(yExtent)
+      .range([innerHeight * scale + viewState.target[1], viewState.target[1]]);
+  }, [yExtent, viewState, innerHeight]);
+
+  const xTicks = useMemo(() => {
+    return transformedXScale.ticks(8);
+  }, [transformedXScale]);
+
+  const yTicks = useMemo(() => {
+    return transformedYScale.ticks(6);
+  }, [transformedYScale]);
+
+  const deckData = useMemo(() => {
+    const items = [];
+
+    const scale = Math.pow(2, viewState.zoom);
+
+    plotterPoints.forEach((point) => {
+      const cx = transformedXScale(point.x);
+
+      const cy = transformedYScale(point.y);
+
+      const positions = computeGrid(
+        cx,
+        cy,
+        imageCount,
+        (IMAGE_SIZE + xGap) * scale,
+        (IMAGE_SIZE + yGap) * scale,
+      );
+
+      positions.forEach((pos, index) => {
+        if (
+          pos.x < -IMAGE_SIZE ||
+          pos.y < -IMAGE_SIZE ||
+          pos.x > innerWidth + IMAGE_SIZE ||
+          pos.y > innerHeight + IMAGE_SIZE
+        ) {
+          return;
+        }
+
+        items.push({
+          id: `${point.id}-${index}`,
+          x: pos.x,
+          y: pos.y,
+          image: point.image,
+          point,
+          size: IMAGE_SIZE * scale,
+        });
       });
     });
-  });
 
-  return expandedEntries;
-}
+    return items;
+  }, [
+    plotterPoints,
+    transformedXScale,
+    transformedYScale,
+    imageCount,
+    xGap,
+    yGap,
+    innerWidth,
+    innerHeight,
+    viewState,
+  ]);
 
-function createIconLayer(expandedIconData) {
-  return new IconLayer({
-    id: "image-icon-layer",
-    data: expandedIconData,
-    getPosition: (entry) => entry.position,
-    getIcon: (entry) => ({
-      url: entry.image,
-      width: 128,
-      height: 128,
-    }),
-    getSize: 20,
-    sizeUnits: "common",
-    pickable: true,
-    sizeScale: 1,
-  });
-}
+  const iconLayer = useMemo(() => {
+    return new IconLayer({
+      id: "icon-layer",
 
-function createAxesLayers(plotterPoints, xGap, yGap) {
-  if (plotterPoints.length === 0) return [];
-  const xValues = plotterPoints.map((p) => p.x);
-  const yValues = plotterPoints.map((p) => p.y);
-  const xMin = Math.min(...xValues);
-  const xMax = Math.max(...xValues);
-  const yMin = Math.min(...yValues);
-  const yMax = Math.max(...yValues);
-  const padX = (xMax - xMin) * 0.1 || 5;
-  const padY = (yMax - yMin) * 0.1 || 5;
+      data: deckData,
 
-  const xSpacingScale = xGap / 10;
-  const ySpacingScale = yGap / 10;
+      pickable: true,
 
-  const lines = [];
-  const texts = [];
+      billboard: false,
 
-  const tickCount = 5;
-  for (let i = 0; i <= tickCount; i++) {
-    const x = xMin - padX + ((xMax - xMin + padX * 2) * i) / tickCount;
-    const scaledX = x * xSpacingScale;
-    lines.push({
-      sourcePosition: [scaledX, (yMin - padY) * ySpacingScale],
-      targetPosition: [scaledX, (yMax + padY) * ySpacingScale]
-    });
-    texts.push({ position: [scaledX, (yMax + padY + 2) * ySpacingScale], text: Math.round(x).toString() });
-  }
-
-  for (let i = 0; i <= tickCount; i++) {
-    const y = yMin - padY + ((yMax - yMin + padY * 2) * i) / tickCount;
-    const scaledY = y * ySpacingScale;
-    lines.push({
-      sourcePosition: [(xMin - padX) * xSpacingScale, scaledY],
-      targetPosition: [(xMax + padX) * xSpacingScale, scaledY]
-    });
-    texts.push({ position: [(xMin - padX - 2) * xSpacingScale, scaledY], text: Math.round(y).toString() });
-  }
-
-  return [
-    new LineLayer({
-      id: "grid-lines",
-      data: lines,
-      getSourcePosition: (d) => d.sourcePosition,
-      getTargetPosition: (d) => d.targetPosition,
-      getColor: [42, 42, 62],
-      getWidth: 1,
-      widthUnits: "pixels",
-    }),
-    new TextLayer({
-      id: "axis-labels",
-      data: texts,
-      getPosition: (d) => d.position,
-      getText: (d) => d.text,
-      getSize: 12,
-      getColor: [136, 136, 136],
       sizeUnits: "pixels",
-    }),
-  ];
-}
 
-function DeckGLTooltip({ tooltipInfo }) {
-  const { x, y, object } = tooltipInfo;
+      getPosition: (d) => [d.x, d.y],
+
+      getSize: (d) => d.size,
+
+      getIcon: (d) => ({
+        url: d.image,
+        width: 128,
+        height: 128,
+        anchorY: 64,
+      }),
+
+      onHover: ({ object, x, y }) => {
+        if (object) {
+          setHovered({
+            x,
+            y,
+            point: object.point,
+          });
+        } else {
+          setHovered(null);
+        }
+      },
+    });
+  }, [deckData]);
+
+  const zoom = useCallback((delta) => {
+    setViewState((prev) => ({
+      ...prev,
+      zoom: clamp(prev.zoom + delta, ZOOM_MIN, ZOOM_MAX),
+    }));
+  }, []);
+
+  const handleWheel = useCallback(
+    (event) => {
+      event.preventDefault();
+
+      zoom(event.deltaY > 0 ? -0.15 : 0.15);
+    },
+    [zoom],
+  );
+
+  const handlePointerDown = useCallback((event) => {
+    dragRef.current = {
+      dragging: true,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  }, []);
+
+  const handlePointerMove = useCallback((event) => {
+    if (!dragRef.current.dragging) {
+      return;
+    }
+
+    const dx = event.clientX - dragRef.current.startX;
+
+    const dy = event.clientY - dragRef.current.startY;
+
+    dragRef.current.startX = event.clientX;
+    dragRef.current.startY = event.clientY;
+
+    setViewState((prev) => ({
+      ...prev,
+      target: [prev.target[0] + dx, prev.target[1] + dy, 0],
+    }));
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    dragRef.current.dragging = false;
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setViewState({
+      zoom: 0,
+      target: [0, 0, 0],
+    });
+  }, []);
 
   return (
     <div
-      className="plotter-tooltip"
+      ref={containerRef}
       style={{
-        display: "block",
-        left: x + 12,
-        top: y - 10,
+        width: "100%",
+        position: "relative",
       }}
     >
-      <div className="tooltip-label">{object.label}</div>
-      <div className="tooltip-meta">
-        <span>Interval: {object.meta.interval}s</span>
-        <span>Angle: {object.meta.angle}°</span>
-        <span>Quality: {object.meta.quality}</span>
+      <PlotterControls
+        zoomLevel={viewState.zoom}
+        onZoomIn={() => zoom(0.25)}
+        onZoomOut={() => zoom(-0.25)}
+        onReset={handleReset}
+      />
+
+      <div
+        style={{
+          width: "100%",
+          height,
+          position: "relative",
+          background: "#16213e",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: PLOT_MARGIN.left,
+            top: PLOT_MARGIN.top,
+            width: innerWidth,
+            height: innerHeight,
+            overflow: "hidden",
+            border: "1px solid #555",
+          }}
+        >
+          <DeckGL
+            views={VIEW}
+            controller={false}
+            layers={[iconLayer]}
+            viewState={{
+              target: [0, 0, 0],
+              zoom: 0,
+            }}
+            style={{
+              width: "100%",
+              height: "100%",
+            }}
+          />
+        </div>
+
+        <svg
+          width={containerWidth}
+          height={height}
+          style={{
+            position: "absolute",
+            inset: 0,
+            touchAction: "none",
+            userSelect: "none",
+          }}
+          onWheel={handleWheel}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+        >
+          <defs>
+            <clipPath id="plot-clip">
+              <rect
+                x={PLOT_MARGIN.left}
+                y={PLOT_MARGIN.top}
+                width={innerWidth}
+                height={innerHeight}
+              />
+            </clipPath>
+          </defs>
+
+          <rect width={containerWidth} height={height} fill="#16213e" />
+
+          <g
+            transform={`
+              translate(
+                ${PLOT_MARGIN.left},
+                ${PLOT_MARGIN.top}
+              )
+            `}
+          >
+            <AxisGrid
+              xTicks={xTicks}
+              yTicks={yTicks}
+              xScale={transformedXScale}
+              yScale={transformedYScale}
+              innerWidth={innerWidth}
+              innerHeight={innerHeight}
+            />
+
+            <AxisLabels
+              xTicks={xTicks}
+              yTicks={yTicks}
+              xScale={transformedXScale}
+              yScale={transformedYScale}
+              innerHeight={innerHeight}
+            />
+
+            <rect
+              x={0}
+              y={0}
+              width={innerWidth}
+              height={innerHeight}
+              fill="none"
+              stroke="#555"
+            />
+          </g>
+        </svg>
+
+        {hovered && (
+          <div
+            className="plotter-tooltip"
+            style={{
+              position: "fixed",
+              left: hovered.x + 10,
+              top: hovered.y - 10,
+              pointerEvents: "none",
+              zIndex: 1000,
+            }}
+          >
+            <div className="tooltip-label">{hovered.point.label}</div>
+
+            <div className="tooltip-meta">
+              <span>
+                Interval:
+                {hovered.point.meta.interval}s
+              </span>
+
+              <span>
+                Angle:
+                {hovered.point.meta.angle}°
+              </span>
+
+              <span>
+                Quality:
+                {hovered.point.meta.quality}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function AxisGrid({ xTicks, yTicks, xScale, yScale, innerWidth, innerHeight }) {
+  return (
+    <g>
+      {xTicks.map((tick) => (
+        <line
+          key={`x-${tick}`}
+          x1={xScale(tick)}
+          y1={0}
+          x2={xScale(tick)}
+          y2={innerHeight}
+          stroke="#2a3355"
+        />
+      ))}
+
+      {yTicks.map((tick) => (
+        <line
+          key={`y-${tick}`}
+          x1={0}
+          y1={yScale(tick)}
+          x2={innerWidth}
+          y2={yScale(tick)}
+          stroke="#2a3355"
+        />
+      ))}
+    </g>
+  );
+}
+
+function AxisLabels({ xTicks, yTicks, xScale, yScale, innerHeight }) {
+  return (
+    <g>
+      {xTicks.map((tick) => (
+        <text
+          key={`xt-${tick}`}
+          x={xScale(tick)}
+          y={innerHeight + 18}
+          fill="#999"
+          fontSize={11}
+          textAnchor="middle"
+        >
+          {tick.toFixed(1)}
+        </text>
+      ))}
+
+      {yTicks.map((tick) => (
+        <text
+          key={`yt-${tick}`}
+          x={-10}
+          y={yScale(tick)}
+          fill="#999"
+          fontSize={11}
+          textAnchor="end"
+          dominantBaseline="middle"
+        >
+          {tick.toFixed(1)}
+        </text>
+      ))}
+    </g>
+  );
+}
+
+function computeGrid(centerX, centerY, imageCount, spacingX, spacingY) {
+  const configs = {
+    1: { rows: 1, cols: 1 },
+    2: { rows: 1, cols: 2 },
+    4: { rows: 2, cols: 2 },
+    8: { rows: 2, cols: 4 },
+  };
+
+  const config = configs[imageCount] || configs[1];
+
+  const positions = [];
+
+  for (let row = 0; row < config.rows; row++) {
+    for (let col = 0; col < config.cols; col++) {
+      positions.push({
+        x: centerX + (col - (config.cols - 1) / 2) * spacingX,
+
+        y: centerY + (row - (config.rows - 1) / 2) * spacingY,
+      });
+    }
+  }
+
+  return positions;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 export default DeckGLPlotter;
