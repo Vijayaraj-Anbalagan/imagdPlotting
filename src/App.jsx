@@ -27,25 +27,67 @@ function App() {
   const renderActivePlotter = () => {
     switch (activeTab) {
       case "Recharts":
-        return <RechartsPlotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <RechartsPlotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
 
       case "D3":
-        return <D3Plotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <D3Plotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
 
       case "PixiJS":
-        return <PixiPlotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <PixiPlotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
 
       case "Konva":
-        return <KonvaPlotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <KonvaPlotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
 
       case "DeckGL":
-        return <DeckGLPlotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <DeckGLPlotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
 
       case "ECharts":
-        return <EChartsPlotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <EChartsPlotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
 
       default:
-        return <RechartsPlotter imageCount={imageCount} xGap={appliedXGap} yGap={appliedYGap} />;
+        return (
+          <RechartsPlotter
+            imageCount={imageCount}
+            xGap={appliedXGap}
+            yGap={appliedYGap}
+          />
+        );
     }
   };
 
@@ -60,7 +102,14 @@ function App() {
         setImageCount={setImageCount}
       />
 
-      <div style={{ display: "flex", gap: "20px", justifyContent: "center", marginBottom: "20px" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "20px",
+          justifyContent: "center",
+          marginBottom: "20px",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <label style={{ color: "#fff" }}>X Gap:</label>
           <input
@@ -101,14 +150,6 @@ function App() {
       </div>
 
       <div className="viewer-container">{renderActivePlotter()}</div>
-    </div>
-  );
-}
-
-function PlaceholderPlotter({ libraryName }) {
-  return (
-    <div className="plotter-loading">
-      {libraryName} plotter — coming soon (Phase 2/3)
     </div>
   );
 }

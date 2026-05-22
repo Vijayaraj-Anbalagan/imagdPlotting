@@ -12,7 +12,12 @@ function D3Plotter({ imageCount, xGap, yGap }) {
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
-    <D3PlotCanvas plotterPoints={plotterPoints} imageCount={imageCount} xGap={xGap} yGap={yGap} />
+    <D3PlotCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      xGap={xGap}
+      yGap={yGap}
+    />
   );
 }
 
@@ -47,25 +52,31 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       imageCount,
       containerWidth,
       xGap,
-      yGap
+      yGap,
     );
   }, [plotterPoints, imageCount, containerWidth, xGap, yGap]);
 
   const handleZoomIn = () => {
     if (zoomBehaviorRef.current && svgRef.current) {
-      d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 1.5);
+      d3.select(svgRef.current)
+        .transition()
+        .call(zoomBehaviorRef.current.scaleBy, 1.5);
     }
   };
 
   const handleZoomOut = () => {
     if (zoomBehaviorRef.current && svgRef.current) {
-      d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 1 / 1.5);
+      d3.select(svgRef.current)
+        .transition()
+        .call(zoomBehaviorRef.current.scaleBy, 1 / 1.5);
     }
   };
 
   const handleReset = () => {
     if (zoomBehaviorRef.current && svgRef.current) {
-      d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+      d3.select(svgRef.current)
+        .transition()
+        .call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
     }
   };
 
@@ -77,12 +88,24 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onReset={handleReset}
       />
       <svg ref={svgRef} />
-      <div ref={tooltipRef} className="plotter-tooltip" style={{ display: "none" }} />
+      <div
+        ref={tooltipRef}
+        className="plotter-tooltip"
+        style={{ display: "none" }}
+      />
     </div>
   );
 }
 
-function renderPlot(svgElement, tooltipElement, plotterPoints, imageCount, containerWidth, xGap, yGap) {
+function renderPlot(
+  svgElement,
+  tooltipElement,
+  plotterPoints,
+  imageCount,
+  containerWidth,
+  xGap,
+  yGap,
+) {
   const width = containerWidth;
   const height = PLOT_DIMENSIONS.height;
   const margin = PLOT_MARGIN;
@@ -100,10 +123,13 @@ function renderPlot(svgElement, tooltipElement, plotterPoints, imageCount, conta
   const xScale = buildXScale(plotterPoints, innerWidth, xGap);
   const yScale = buildYScale(plotterPoints, innerHeight, yGap);
 
-  const zoomGroup = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  const zoomGroup = svg
+    .append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
 
   const clipId = "plot-clip-" + Math.random().toString(36).slice(2);
-  svg.append("defs")
+  svg
+    .append("defs")
     .append("clipPath")
     .attr("id", clipId)
     .append("rect")
@@ -115,9 +141,17 @@ function renderPlot(svgElement, tooltipElement, plotterPoints, imageCount, conta
 
   renderAxes(zoomGroup, xScale, yScale, innerWidth, innerHeight);
   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
-  renderImagePoints(contentGroup, plotterPoints, xScale, yScale, imageCount, tooltipElement);
+  renderImagePoints(
+    contentGroup,
+    plotterPoints,
+    xScale,
+    yScale,
+    imageCount,
+    tooltipElement,
+  );
 
-  const zoomBehavior = d3.zoom()
+  const zoomBehavior = d3
+    .zoom()
     .scaleExtent([0.3, 10])
     .on("zoom", (event) => {
       const newXScale = event.transform.rescaleX(xScale);
@@ -154,14 +188,16 @@ function buildYScale(plotterPoints, innerHeight, yGap) {
 }
 
 function renderAxes(container, xScale, yScale, innerWidth, innerHeight) {
-  container.append("g")
+  container
+    .append("g")
     .attr("class", "x-axis")
     .attr("transform", `translate(0,${innerHeight})`)
     .call(d3.axisBottom(xScale).ticks(8))
     .selectAll("text")
     .attr("fill", "#888");
 
-  container.append("g")
+  container
+    .append("g")
     .attr("class", "y-axis")
     .call(d3.axisLeft(yScale).ticks(6))
     .selectAll("text")
@@ -171,7 +207,7 @@ function renderAxes(container, xScale, yScale, innerWidth, innerHeight) {
   container.selectAll(".x-axis path, .y-axis path").attr("stroke", "#555");
 }
 
-function updateAxes(container, newXScale, newYScale, innerWidth, innerHeight) {
+function updateAxes(container, newXScale, newYScale) {
   container.select(".x-axis").call(d3.axisBottom(newXScale).ticks(8));
   container.select(".y-axis").call(d3.axisLeft(newYScale).ticks(6));
 
@@ -181,7 +217,8 @@ function updateAxes(container, newXScale, newYScale, innerWidth, innerHeight) {
 }
 
 function renderGrid(container, xScale, yScale, innerWidth, innerHeight) {
-  container.append("g")
+  container
+    .append("g")
     .attr("class", "grid-lines")
     .selectAll("line.horizontal")
     .data(yScale.ticks(6))
@@ -194,7 +231,8 @@ function renderGrid(container, xScale, yScale, innerWidth, innerHeight) {
     .attr("stroke", "#2a2a3e")
     .attr("stroke-dasharray", "3 3");
 
-  container.select(".grid-lines")
+  container
+    .select(".grid-lines")
     .selectAll("line.vertical")
     .data(xScale.ticks(8))
     .enter()
@@ -207,18 +245,32 @@ function renderGrid(container, xScale, yScale, innerWidth, innerHeight) {
     .attr("stroke-dasharray", "3 3");
 }
 
-function renderImagePoints(container, plotterPoints, xScale, yScale, imageCount, tooltipElement) {
+function renderImagePoints(
+  container,
+  plotterPoints,
+  xScale,
+  yScale,
+  imageCount,
+  tooltipElement,
+) {
   const tooltip = d3.select(tooltipElement);
 
   plotterPoints.forEach((point) => {
     const centerX = xScale(point.x);
     const centerY = yScale(point.y);
-    const positions = computeImagePositions(centerX, centerY, CELL_SIZE, CELL_SIZE, imageCount);
+    const positions = computeImagePositions(
+      centerX,
+      centerY,
+      CELL_SIZE,
+      CELL_SIZE,
+      imageCount,
+    );
 
     const pointGroup = container.append("g").attr("class", "image-point");
 
     positions.forEach((position) => {
-      pointGroup.append("image")
+      pointGroup
+        .append("image")
         .attr("href", point.image)
         .attr("x", position.x)
         .attr("y", position.y)
@@ -240,18 +292,20 @@ function showTooltip(tooltip, event, point) {
     .style("display", "block")
     .html(
       `<div class="tooltip-label">${point.label}</div>` +
-      `<div class="tooltip-meta">` +
-      `<span>Interval: ${point.meta.interval}s</span>` +
-      `<span>Angle: ${point.meta.angle}°</span>` +
-      `<span>Quality: ${point.meta.quality}</span>` +
-      `</div>`
+        `<div class="tooltip-meta">` +
+        `<span>Interval: ${point.meta.interval}s</span>` +
+        `<span>Angle: ${point.meta.angle}°</span>` +
+        `<span>Quality: ${point.meta.quality}</span>` +
+        `</div>`,
     );
 
   moveTooltip(tooltip, event);
 }
 
 function moveTooltip(tooltip, event) {
-  const containerRect = event.currentTarget.closest(".viewer-container")?.getBoundingClientRect();
+  const containerRect = event.currentTarget
+    .closest(".viewer-container")
+    ?.getBoundingClientRect();
   if (!containerRect) return;
 
   tooltip

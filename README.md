@@ -1,16 +1,126 @@
-# React + Vite
+# imagdPlotting
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A simple Proof of Concept (POC) project for experimenting with different plotting/rendering approaches in React.
 
-Currently, two official plugins are available:
+## Tech Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React
+- Vite
+- Konva
+- PixiJS
+- Recharts
+- Deck.gl
+-
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+# Getting Started
 
-## Expanding the ESLint configuration
+## Install Dependencies
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm install
+```
+
+## Run Development Server
+
+```bash
+npm run dev
+```
+
+This will start the local Vite development server.
+
+---
+
+# Build for Production
+
+```bash
+npm run build
+```
+
+---
+
+# Preview Production Build
+
+```bash
+npm run preview
+```
+
+---
+
+# Repository Markdown Dump Generator
+
+This project includes a helper script to generate a markdown dump of the repository source code.
+
+## Run the Generator
+
+```bash
+node generate-repo-md.cjs
+```
+
+## Output
+
+The script generates:
+
+```bash
+repository_dump.md
+```
+
+This markdown file contains a consolidated dump of the project source/code structure which can be useful for:
+
+- Sharing project context
+- Code reviews
+- AI-assisted analysis
+- Documentation snapshots
+
+---
+
+# Project Notes
+
+This repository is currently a **POC (Proof of Concept)** and is focused primarily on experimentation and visualization testing.
+
+Because of that:
+
+- Coding standards are not fully enforced yet
+- Some ESLint rules are intentionally disabled in certain areas
+- Code structure and architecture are still evolving
+- Optimizations and refactoring are pending
+
+The current goal is rapid iteration and testing of multiple plotting/rendering approaches.
+
+---
+
+# Available Plotter Components
+
+The project currently includes multiple rendering implementations:
+
+- Konva Plotter
+- Pixi Plotter
+- DeckGL Plotter
+- ECharts Plotter
+- Recharts Plotter
+- D3 Plotter
+
+These are available under:
+
+```bash
+src/components
+```
+
+---
+
+# Folder Structure
+
+```bash
+src/
+ ├── components/
+ ├── lib/
+ ├── App.jsx
+ └── main.jsx
+```
+
+---
+
+# License
+
+Internal / POC Usage

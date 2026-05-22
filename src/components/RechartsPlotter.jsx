@@ -481,13 +481,7 @@ function AxisGrid({
   );
 }
 
-function AxisLabels({
-  xTicks,
-  yTicks,
-  xTickScale,
-  yTickScale,
-  innerHeight,
-}) {
+function AxisLabels({ xTicks, yTicks, xTickScale, yTickScale, innerHeight }) {
   return (
     <>
       {xTicks.map((tick, index) => {

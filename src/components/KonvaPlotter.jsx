@@ -1,5 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Stage, Layer, Image as KonvaImage, Text, Line, Rect, Group } from "react-konva";
+import {
+  Stage,
+  Layer,
+  Image as KonvaImage,
+  Text,
+  Line,
+  Rect,
+  Group,
+} from "react-konva";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
@@ -42,13 +50,15 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const draggableGroupRef = useRef(null);
   const stageRef = useRef(null);
 
-  const innerWidth = PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
-  const innerHeight = PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+  const innerWidth =
+    PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+  const innerHeight =
+    PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
   const { xScale, yScale, xExtent, yExtent } = buildScales(
     plotterPoints,
     innerWidth,
-    innerHeight
+    innerHeight,
   );
 
   const visibleDomain = computeVisibleDomain(
@@ -57,7 +67,7 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     contentOffset,
     contentScale,
     innerWidth,
-    innerHeight
+    innerHeight,
   );
 
   const handleWheel = useCallback(
@@ -66,25 +76,37 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       const stage = event.target.getStage();
       const pointerPosition = stage.getPointerPosition();
 
-      if (!isPointerInsidePlotArea(pointerPosition, innerWidth, innerHeight)) return;
+      if (!isPointerInsidePlotArea(pointerPosition, innerWidth, innerHeight))
+        return;
 
       const nativeEvent = event.evt;
       const isPinchGesture = nativeEvent.ctrlKey;
-      const scaleDelta = computeWheelScaleDelta(nativeEvent.deltaY, isPinchGesture);
+      const scaleDelta = computeWheelScaleDelta(
+        nativeEvent.deltaY,
+        isPinchGesture,
+      );
       const newScale = clampScale(contentScale * scaleDelta);
 
       const mouseRelX = pointerPosition.x - PLOT_MARGIN.left - contentOffset.x;
       const mouseRelY = pointerPosition.y - PLOT_MARGIN.top - contentOffset.y;
 
-      const nextOffsetX = contentOffset.x - mouseRelX * (newScale / contentScale - 1);
-      const nextOffsetY = contentOffset.y - mouseRelY * (newScale / contentScale - 1);
+      const nextOffsetX =
+        contentOffset.x - mouseRelX * (newScale / contentScale - 1);
+      const nextOffsetY =
+        contentOffset.y - mouseRelY * (newScale / contentScale - 1);
 
-      const clampedOffset = clampContentOffset(nextOffsetX, nextOffsetY, newScale, innerWidth, innerHeight);
+      const clampedOffset = clampContentOffset(
+        nextOffsetX,
+        nextOffsetY,
+        newScale,
+        innerWidth,
+        innerHeight,
+      );
 
       setContentScale(newScale);
       setContentOffset(clampedOffset);
     },
-    [contentScale, contentOffset, innerWidth, innerHeight]
+    [contentScale, contentOffset, innerWidth, innerHeight],
   );
 
   const handleContentDragStart = useCallback(() => {
@@ -97,35 +119,46 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       const offsetX = node.x() - PLOT_MARGIN.left;
       const offsetY = node.y() - PLOT_MARGIN.top;
 
-      const clamped = clampContentOffset(offsetX, offsetY, contentScale, innerWidth, innerHeight);
+      const clamped = clampContentOffset(
+        offsetX,
+        offsetY,
+        contentScale,
+        innerWidth,
+        innerHeight,
+      );
 
       node.x(PLOT_MARGIN.left + clamped.x);
       node.y(PLOT_MARGIN.top + clamped.y);
     },
-    [contentScale, innerWidth, innerHeight]
+    [contentScale, innerWidth, innerHeight],
   );
 
-  const handleContentDragEnd = useCallback(
-    (event) => {
-      setIsDragging(false);
-      const nodeX = event.target.x();
-      const nodeY = event.target.y();
-      setContentOffset({
-        x: nodeX - PLOT_MARGIN.left,
-        y: nodeY - PLOT_MARGIN.top,
-      });
-    },
-    []
-  );
+  const handleContentDragEnd = useCallback((event) => {
+    setIsDragging(false);
+    const nodeX = event.target.x();
+    const nodeY = event.target.y();
+    setContentOffset({
+      x: nodeX - PLOT_MARGIN.left,
+      y: nodeY - PLOT_MARGIN.top,
+    });
+  }, []);
 
   const handleZoomIn = useCallback(() => {
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const newScale = clampScale(contentScale * ZOOM_STEP);
 
-    const nextOffsetX = contentOffset.x - centerX * (newScale / contentScale - 1);
-    const nextOffsetY = contentOffset.y - centerY * (newScale / contentScale - 1);
-    const clampedOffset = clampContentOffset(nextOffsetX, nextOffsetY, newScale, innerWidth, innerHeight);
+    const nextOffsetX =
+      contentOffset.x - centerX * (newScale / contentScale - 1);
+    const nextOffsetY =
+      contentOffset.y - centerY * (newScale / contentScale - 1);
+    const clampedOffset = clampContentOffset(
+      nextOffsetX,
+      nextOffsetY,
+      newScale,
+      innerWidth,
+      innerHeight,
+    );
 
     setContentScale(newScale);
     setContentOffset(clampedOffset);
@@ -136,9 +169,17 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     const centerY = innerHeight / 2;
     const newScale = clampScale(contentScale / ZOOM_STEP);
 
-    const nextOffsetX = contentOffset.x - centerX * (newScale / contentScale - 1);
-    const nextOffsetY = contentOffset.y - centerY * (newScale / contentScale - 1);
-    const clampedOffset = clampContentOffset(nextOffsetX, nextOffsetY, newScale, innerWidth, innerHeight);
+    const nextOffsetX =
+      contentOffset.x - centerX * (newScale / contentScale - 1);
+    const nextOffsetY =
+      contentOffset.y - centerY * (newScale / contentScale - 1);
+    const clampedOffset = clampContentOffset(
+      nextOffsetX,
+      nextOffsetY,
+      newScale,
+      innerWidth,
+      innerHeight,
+    );
 
     setContentScale(newScale);
     setContentOffset(clampedOffset);
@@ -149,7 +190,11 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     setContentOffset({ x: 0, y: 0 });
   }, []);
 
-  const stageCursor = isDragging ? "grabbing" : contentScale > 1 ? "grab" : "default";
+  const stageCursor = isDragging
+    ? "grabbing"
+    : contentScale > 1
+      ? "grab"
+      : "default";
 
   return (
     <div style={{ position: "relative" }}>
@@ -314,11 +359,29 @@ function AxisBorder({ innerWidth, innerHeight }) {
 }
 
 function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
-  const xTicks = buildTicks(visibleDomain.xMin, visibleDomain.xMax, AXIS_TICK_COUNT);
-  const yTicks = buildTicks(visibleDomain.yMin, visibleDomain.yMax, AXIS_TICK_COUNT);
+  const xTicks = buildTicks(
+    visibleDomain.xMin,
+    visibleDomain.xMax,
+    AXIS_TICK_COUNT,
+  );
+  const yTicks = buildTicks(
+    visibleDomain.yMin,
+    visibleDomain.yMax,
+    AXIS_TICK_COUNT,
+  );
 
-  const xScreenScale = buildLinearScale(visibleDomain.xMin, visibleDomain.xMax, 0, innerWidth);
-  const yScreenScale = buildLinearScale(visibleDomain.yMin, visibleDomain.yMax, innerHeight, 0);
+  const xScreenScale = buildLinearScale(
+    visibleDomain.xMin,
+    visibleDomain.xMax,
+    0,
+    innerWidth,
+  );
+  const yScreenScale = buildLinearScale(
+    visibleDomain.yMin,
+    visibleDomain.yMax,
+    innerHeight,
+    0,
+  );
 
   const gridLines = [];
 
@@ -333,7 +396,7 @@ function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
         strokeWidth={1}
         dash={[4, 4]}
         listening={false}
-      />
+      />,
     );
   });
 
@@ -348,7 +411,7 @@ function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
         strokeWidth={1}
         dash={[4, 4]}
         listening={false}
-      />
+      />,
     );
   });
 
@@ -356,17 +419,36 @@ function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
 }
 
 function AxisLabels({ visibleDomain, innerWidth, innerHeight }) {
-  const xTicks = buildTicks(visibleDomain.xMin, visibleDomain.xMax, AXIS_TICK_COUNT);
-  const yTicks = buildTicks(visibleDomain.yMin, visibleDomain.yMax, AXIS_TICK_COUNT);
+  const xTicks = buildTicks(
+    visibleDomain.xMin,
+    visibleDomain.xMax,
+    AXIS_TICK_COUNT,
+  );
+  const yTicks = buildTicks(
+    visibleDomain.yMin,
+    visibleDomain.yMax,
+    AXIS_TICK_COUNT,
+  );
 
-  const xScreenScale = buildLinearScale(visibleDomain.xMin, visibleDomain.xMax, 0, innerWidth);
-  const yScreenScale = buildLinearScale(visibleDomain.yMin, visibleDomain.yMax, innerHeight, 0);
+  const xScreenScale = buildLinearScale(
+    visibleDomain.xMin,
+    visibleDomain.xMax,
+    0,
+    innerWidth,
+  );
+  const yScreenScale = buildLinearScale(
+    visibleDomain.yMin,
+    visibleDomain.yMax,
+    innerHeight,
+    0,
+  );
 
   const tickLabels = [];
 
   xTicks.forEach((value, index) => {
     const xPos = PLOT_MARGIN.left + xScreenScale(value);
-    if (xPos < PLOT_MARGIN.left - 5 || xPos > PLOT_MARGIN.left + innerWidth + 5) return;
+    if (xPos < PLOT_MARGIN.left - 5 || xPos > PLOT_MARGIN.left + innerWidth + 5)
+      return;
     tickLabels.push(
       <Text
         key={`xlabel-${index}`}
@@ -376,13 +458,14 @@ function AxisLabels({ visibleDomain, innerWidth, innerHeight }) {
         fill={TICK_LABEL_COLOR}
         fontSize={TICK_LABEL_FONT_SIZE}
         listening={false}
-      />
+      />,
     );
   });
 
   yTicks.forEach((value, index) => {
     const yPos = PLOT_MARGIN.top + yScreenScale(value);
-    if (yPos < PLOT_MARGIN.top - 5 || yPos > PLOT_MARGIN.top + innerHeight + 5) return;
+    if (yPos < PLOT_MARGIN.top - 5 || yPos > PLOT_MARGIN.top + innerHeight + 5)
+      return;
     tickLabels.push(
       <Text
         key={`ylabel-${index}`}
@@ -394,17 +477,30 @@ function AxisLabels({ visibleDomain, innerWidth, innerHeight }) {
         width={32}
         align="right"
         listening={false}
-      />
+      />,
     );
   });
 
   return <>{tickLabels}</>;
 }
 
-function ImagePointGroup({ point, xScale, yScale, imageCount, onHover, onCursorMove }) {
+function ImagePointGroup({
+  point,
+  xScale,
+  yScale,
+  imageCount,
+  onHover,
+  onCursorMove,
+}) {
   const centerX = xScale(point.x);
   const centerY = yScale(point.y);
-  const positions = computeImagePositions(centerX, centerY, CELL_SIZE, CELL_SIZE, imageCount);
+  const positions = computeImagePositions(
+    centerX,
+    centerY,
+    CELL_SIZE,
+    CELL_SIZE,
+    imageCount,
+  );
 
   return (
     <>
@@ -425,7 +521,16 @@ function ImagePointGroup({ point, xScale, yScale, imageCount, onHover, onCursorM
   );
 }
 
-function KonvaImageFromUrl({ imageUrl, x, y, width, height, point, onHover, onCursorMove }) {
+function KonvaImageFromUrl({
+  imageUrl,
+  x,
+  y,
+  width,
+  height,
+  point,
+  onHover,
+  onCursorMove,
+}) {
   const [loadedImage, setLoadedImage] = useState(null);
 
   useEffect(() => {
@@ -433,7 +538,9 @@ function KonvaImageFromUrl({ imageUrl, x, y, width, height, point, onHover, onCu
     htmlImage.crossOrigin = "anonymous";
     htmlImage.src = imageUrl;
     htmlImage.onload = () => setLoadedImage(htmlImage);
-    return () => { htmlImage.onload = null; };
+    return () => {
+      htmlImage.onload = null;
+    };
   }, [imageUrl]);
 
   const handleMouseEnter = useCallback(
@@ -443,7 +550,7 @@ function KonvaImageFromUrl({ imageUrl, x, y, width, height, point, onHover, onCu
       onCursorMove({ x: pointer.x, y: pointer.y });
       onHover(point);
     },
-    [point, onHover, onCursorMove]
+    [point, onHover, onCursorMove],
   );
 
   const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
@@ -465,7 +572,11 @@ function KonvaImageFromUrl({ imageUrl, x, y, width, height, point, onHover, onCu
 
 /* ─── Pure utility functions ──────────────────────────────────────────── */
 
-function isPointerInsidePlotArea(pointerPosition, plotInnerWidth, plotInnerHeight) {
+function isPointerInsidePlotArea(
+  pointerPosition,
+  plotInnerWidth,
+  plotInnerHeight,
+) {
   return (
     pointerPosition.x > PLOT_MARGIN.left &&
     pointerPosition.x < PLOT_MARGIN.left + plotInnerWidth &&
@@ -485,7 +596,13 @@ function computeWheelScaleDelta(deltaY, isPinchGesture) {
   return deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
 }
 
-function clampContentOffset(rawX, rawY, scale, plotInnerWidth, plotInnerHeight) {
+function clampContentOffset(
+  rawX,
+  rawY,
+  scale,
+  plotInnerWidth,
+  plotInnerHeight,
+) {
   const scaledWidth = plotInnerWidth * scale;
   const scaledHeight = plotInnerHeight * scale;
 
@@ -520,8 +637,10 @@ function buildScales(plotterPoints, plotInnerWidth, plotInnerHeight) {
   const yMin = Math.min(...yValues);
   const yMax = Math.max(...yValues);
 
-  const xPadding = (xMax - xMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
-  const yPadding = (yMax - yMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
+  const xPadding =
+    (xMax - xMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
+  const yPadding =
+    (yMax - yMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
 
   const xExtent = [xMin - xPadding, xMax + xPadding];
   const yExtent = [yMin - yPadding, yMax + yPadding];
@@ -532,14 +651,23 @@ function buildScales(plotterPoints, plotInnerWidth, plotInnerHeight) {
   return { xScale, yScale, xExtent, yExtent };
 }
 
-function computeVisibleDomain(xExtent, yExtent, contentOffset, scale, plotInnerWidth, plotInnerHeight) {
+function computeVisibleDomain(
+  xExtent,
+  yExtent,
+  contentOffset,
+  scale,
+  plotInnerWidth,
+  plotInnerHeight,
+) {
   const domainWidth = xExtent[1] - xExtent[0];
   const domainHeight = yExtent[1] - yExtent[0];
 
-  const xMin = xExtent[0] - (contentOffset.x / scale / plotInnerWidth) * domainWidth;
+  const xMin =
+    xExtent[0] - (contentOffset.x / scale / plotInnerWidth) * domainWidth;
   const xMax = xMin + domainWidth / scale;
 
-  const yMax = yExtent[1] + (contentOffset.y / scale / plotInnerHeight) * domainHeight;
+  const yMax =
+    yExtent[1] + (contentOffset.y / scale / plotInnerHeight) * domainHeight;
   const yMin = yMax - domainHeight / scale;
 
   return { xMin, xMax, yMin, yMax };
@@ -556,7 +684,8 @@ function buildTicks(min, max, count) {
   const rawStep = (max - min) / count;
   const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
   const niceSteps = [1, 2, 2.5, 5, 10];
-  const step = niceSteps.map((s) => s * magnitude).find((s) => s >= rawStep) ?? rawStep;
+  const step =
+    niceSteps.map((s) => s * magnitude).find((s) => s >= rawStep) ?? rawStep;
 
   const start = Math.ceil(min / step) * step;
   const ticks = [];

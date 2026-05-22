@@ -11,7 +11,12 @@ function EChartsPlotter({ imageCount, xGap, yGap }) {
   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
-    <EChartsCanvas plotterPoints={plotterPoints} imageCount={imageCount} xGap={xGap} yGap={yGap} />
+    <EChartsCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      xGap={xGap}
+      yGap={yGap}
+    />
   );
 }
 
@@ -20,7 +25,7 @@ function EChartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
   const chartOption = useMemo(
     () => buildChartOption(plotterPoints, imageCount, xGap, yGap),
-    [plotterPoints, imageCount, xGap, yGap]
+    [plotterPoints, imageCount, xGap, yGap],
   );
 
   const handleChartEvents = useCallback(() => ({}), []);
@@ -34,16 +39,16 @@ function EChartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     const newRange = range * scale;
     const center = (dataZoom.end + dataZoom.start) / 2;
     instance.dispatchAction({
-      type: 'dataZoom',
+      type: "dataZoom",
       start: Math.max(0, center - newRange / 2),
-      end: Math.min(100, center + newRange / 2)
+      end: Math.min(100, center + newRange / 2),
     });
   };
 
   const handleReset = () => {
     if (!echartsRef.current) return;
     const instance = echartsRef.current.getEchartsInstance();
-    instance.dispatchAction({ type: 'dataZoom', start: 0, end: 100 });
+    instance.dispatchAction({ type: "dataZoom", start: 0, end: 100 });
   };
 
   return (
@@ -72,7 +77,7 @@ function buildChartOption(plotterPoints, imageCount, xGap, yGap) {
 
   const xValues = plotterPoints.map((p) => p.x);
   const yValues = plotterPoints.map((p) => p.y);
-  
+
   const xMin = Math.min(...xValues);
   const xMax = Math.max(...xValues);
   const yMin = Math.min(...yValues);
@@ -130,8 +135,12 @@ function buildChartOption(plotterPoints, imageCount, xGap, yGap) {
             for (let col = 0; col < gridConfig.columns; col++) {
               if (subIndex >= imageCount) break;
 
-              const xPos = col * (subCellWidth + xGap) - ((gridConfig.columns - 1) * (subCellWidth + xGap)) / 2;
-              const yPos = row * (subCellHeight + yGap) - ((gridConfig.rows - 1) * (subCellHeight + yGap)) / 2;
+              const xPos =
+                col * (subCellWidth + xGap) -
+                ((gridConfig.columns - 1) * (subCellWidth + xGap)) / 2;
+              const yPos =
+                row * (subCellHeight + yGap) -
+                ((gridConfig.rows - 1) * (subCellHeight + yGap)) / 2;
 
               children.push({
                 type: "image",
@@ -141,7 +150,7 @@ function buildChartOption(plotterPoints, imageCount, xGap, yGap) {
                   y: coord[1] + yPos - subCellHeight / 2,
                   width: subCellWidth,
                   height: subCellHeight,
-                }
+                },
               });
 
               subIndex++;
