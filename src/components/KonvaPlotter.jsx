@@ -24,6 +24,10 @@ const GRID_COLOR = "#2a2a3e";
 const AXIS_LINE_COLOR = "#555555";
 const TICK_LABEL_COLOR = "#aaaaaa";
 const TICK_LABEL_FONT_SIZE = 11;
+const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
+const BRUSH_STROKE = "#4493ff";
+const BRUSH_STROKE_WIDTH = 1.5;
+const BRUSH_MIN_PIXELS = 5;
 
 function KonvaPlotter({ imageCount, xGap, yGap }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
@@ -47,8 +51,11 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [brushRect, setBrushRect] = useState(null);
   const draggableGroupRef = useRef(null);
   const stageRef = useRef(null);
+  const isShiftHeldRef = useRef(false);
+  const brushStartRef = useRef(null);
 
   const innerWidth =
     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
@@ -69,6 +76,21 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     innerWidth,
     innerHeight,
   );
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Shift") isShiftHeldRef.current = true;
+    };
+    const handleKeyUp = (event) => {
+      if (event.key === "Shift") isShiftHeldRef.current = false;
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   const handleWheel = useCallback(
     (event) => {
@@ -143,6 +165,68 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     });
   }, []);
 
+  const handleBrushStart = useCallback(
+    (event) => {
+      if (isShiftHeldRef.current) return;
+      const stage = event.target.getStage();
+      const pointer = stage.getPointerPosition();
+      if (!isPointerInsidePlotArea(pointer, innerWidth, innerHeight)) return;
+
+      const plotX = clampValue(pointer.x - PLOT_MARGIN.left, 0, innerWidth);
+      const plotY = clampValue(pointer.y - PLOT_MARGIN.top, 0, innerHeight);
+      brushStartRef.current = { x: plotX, y: plotY };
+      setBrushRect({ x: plotX, y: plotY, width: 0, height: 0 });
+    },
+    [innerWidth, innerHeight],
+  );
+
+  const handleBrushMove = useCallback(
+    (event) => {
+      if (!brushStartRef.current) return;
+      const stage = event.target.getStage();
+      const pointer = stage.getPointerPosition();
+
+      const plotX = clampValue(pointer.x - PLOT_MARGIN.left, 0, innerWidth);
+      const plotY = clampValue(pointer.y - PLOT_MARGIN.top, 0, innerHeight);
+      const startPoint = brushStartRef.current;
+
+      setBrushRect({
+        x: Math.min(startPoint.x, plotX),
+        y: Math.min(startPoint.y, plotY),
+        width: Math.abs(plotX - startPoint.x),
+        height: Math.abs(plotY - startPoint.y),
+      });
+    },
+    [innerWidth, innerHeight],
+  );
+
+  const handleBrushEnd = useCallback(() => {
+    if (!brushStartRef.current || !brushRect) {
+      brushStartRef.current = null;
+      setBrushRect(null);
+      return;
+    }
+
+    const isTooSmall =
+      brushRect.width < BRUSH_MIN_PIXELS ||
+      brushRect.height < BRUSH_MIN_PIXELS;
+
+    if (!isTooSmall) {
+      const zoomResult = convertBrushToZoom(
+        brushRect,
+        contentOffset,
+        contentScale,
+        innerWidth,
+        innerHeight,
+      );
+      setContentScale(zoomResult.scale);
+      setContentOffset(zoomResult.offset);
+    }
+
+    brushStartRef.current = null;
+    setBrushRect(null);
+  }, [brushRect, contentOffset, contentScale, innerWidth, innerHeight]);
+
   const handleZoomIn = useCallback(() => {
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
@@ -190,11 +274,17 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     setContentOffset({ x: 0, y: 0 });
   }, []);
 
-  const stageCursor = isDragging
-    ? "grabbing"
-    : contentScale > 1
-      ? "grab"
-      : "default";
+  const handleDoubleClick = useCallback(() => {
+    setContentScale(1);
+    setContentOffset({ x: 0, y: 0 });
+  }, []);
+
+  const isBrushing = brushStartRef.current !== null;
+  const stageCursor = isBrushing
+    ? "crosshair"
+    : isDragging
+      ? "grabbing"
+      : "crosshair";
 
   return (
     <div style={{ position: "relative" }}>
@@ -209,6 +299,8 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         width={PLOT_DIMENSIONS.width}
         height={PLOT_DIMENSIONS.height}
         onWheel={handleWheel}
+        onDblClick={handleDoubleClick}
+        onDblTap={handleDoubleClick}
         style={{ cursor: stageCursor }}
       >
         {/* Static axis layer — grid, labels, border (not affected by zoom/pan) */}
@@ -252,6 +344,18 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
             ))}
           </ClippedContentGroup>
         </Layer>
+
+        {/* Brush overlay layer — captures mouse for box zoom */}
+        <Layer>
+          <BrushSelectionOverlay
+            innerWidth={innerWidth}
+            innerHeight={innerHeight}
+            brushRect={brushRect}
+            onBrushStart={handleBrushStart}
+            onBrushMove={handleBrushMove}
+            onBrushEnd={handleBrushEnd}
+          />
+        </Layer>
       </Stage>
 
       {hoveredPoint && (
@@ -261,6 +365,45 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         />
       )}
     </div>
+  );
+}
+
+function BrushSelectionOverlay({
+  innerWidth,
+  innerHeight,
+  brushRect,
+  onBrushStart,
+  onBrushMove,
+  onBrushEnd,
+}) {
+  return (
+    <Group>
+      {/* Transparent hit area to capture brush events */}
+      <Rect
+        x={PLOT_MARGIN.left}
+        y={PLOT_MARGIN.top}
+        width={innerWidth}
+        height={innerHeight}
+        fill="transparent"
+        onMouseDown={onBrushStart}
+        onMouseMove={onBrushMove}
+        onMouseUp={onBrushEnd}
+        onMouseLeave={onBrushEnd}
+      />
+      {/* Semi-transparent selection rectangle */}
+      {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
+        <Rect
+          x={PLOT_MARGIN.left + brushRect.x}
+          y={PLOT_MARGIN.top + brushRect.y}
+          width={brushRect.width}
+          height={brushRect.height}
+          fill={BRUSH_FILL}
+          stroke={BRUSH_STROKE}
+          strokeWidth={BRUSH_STROKE_WIDTH}
+          listening={false}
+        />
+      )}
+    </Group>
   );
 }
 
@@ -568,6 +711,44 @@ function KonvaImageFromUrl({
       onMouseLeave={handleMouseLeave}
     />
   );
+}
+
+/* ─── Brush → Zoom conversion ─────────────────────────────────────────── */
+
+function convertBrushToZoom(
+  brushPixelRect,
+  currentOffset,
+  currentScale,
+  plotInnerWidth,
+  plotInnerHeight,
+) {
+  const contentX0 =
+    (brushPixelRect.x - currentOffset.x) / currentScale;
+  const contentY0 =
+    (brushPixelRect.y - currentOffset.y) / currentScale;
+  const contentBrushWidth = brushPixelRect.width / currentScale;
+  const contentBrushHeight = brushPixelRect.height / currentScale;
+
+  const fitScaleX = plotInnerWidth / contentBrushWidth;
+  const fitScaleY = plotInnerHeight / contentBrushHeight;
+  const newScale = clampScale(Math.min(fitScaleX, fitScaleY));
+
+  const rawOffsetX = -contentX0 * newScale;
+  const rawOffsetY = -contentY0 * newScale;
+
+  const clampedOffset = clampContentOffset(
+    rawOffsetX,
+    rawOffsetY,
+    newScale,
+    plotInnerWidth,
+    plotInnerHeight,
+  );
+
+  return { scale: newScale, offset: clampedOffset };
+}
+
+function clampValue(value, min, max) {
+  return Math.max(min, Math.min(value, max));
 }
 
 /* ─── Pure utility functions ──────────────────────────────────────────── */
