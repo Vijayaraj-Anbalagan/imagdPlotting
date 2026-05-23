@@ -5,6 +5,8 @@ import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+
 
 const ZOOM_STEP = 1.5;
 const ZOOM_MIN = 0.35;
@@ -49,6 +51,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [brushRect, setBrushRect] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const brushStartRef = useRef(null);
   const isShiftHeldRef = useRef(false);
 
@@ -186,14 +189,29 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   );
 
   const handleZoomIn = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "ZOOM_IN",
+      visualizationLibrary: "Recharts",
+      interactionSource: "button",
+    });
     zoomTo(transform.scale * ZOOM_STEP, innerWidth / 2, innerHeight / 2);
   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
 
   const handleZoomOut = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "ZOOM_OUT",
+      visualizationLibrary: "Recharts",
+      interactionSource: "button",
+    });
     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
 
   const handleReset = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "RESET",
+      visualizationLibrary: "Recharts",
+      interactionSource: "button",
+    });
     setTransform({ scale: 1, x: 0, y: 0 });
     setHoveredPoint(null);
   }, []);
@@ -219,6 +237,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       ) {
         return;
       }
+
+      const isZoomIn = event.deltaY < 0;
+      logChartInteractionEvent({
+        interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
+        visualizationLibrary: "Recharts",
+        interactionSource: "wheel",
+      });
 
       const factor = event.deltaY > 0 ? 1 / 1.15 : 1.15;
       const nextScale = transform.scale * factor;
@@ -257,6 +282,12 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       }
 
       if (isShiftHeldRef.current) {
+        logChartInteractionEvent({
+          interactionType: "PAN",
+          visualizationLibrary: "Recharts",
+          interactionSource: "drag",
+        });
+        setIsDragging(true);
         dragRef.current = {
           dragging: true,
           pointerId: event.pointerId,
@@ -346,6 +377,11 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
           brushRect.height < BRUSH_MIN_PIXELS;
 
         if (!isTooSmall) {
+          logChartInteractionEvent({
+            interactionType: "ZOOM_IN",
+            visualizationLibrary: "Recharts",
+            interactionSource: "brush",
+          });
           const newTransform = convertBrushToTransform(
             brushRect,
             transform,
@@ -361,6 +397,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         return;
       }
 
+      setIsDragging(false);
       dragRef.current.dragging = false;
       dragRef.current.pointerId = null;
       event.currentTarget.releasePointerCapture?.(event.pointerId);
@@ -369,14 +406,19 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   );
 
   const handleDoubleClick = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "RESET",
+      visualizationLibrary: "Recharts",
+      interactionSource: "double_click",
+    });
     setTransform({ scale: 1, x: 0, y: 0 });
     setHoveredPoint(null);
   }, []);
 
-  const isBrushing = brushStartRef.current !== null;
+  const isBrushing = brushRect !== null;
   const stageCursor = isBrushing
     ? "crosshair"
-    : dragRef.current.dragging
+    : isDragging
       ? "grabbing"
       : "crosshair";
 

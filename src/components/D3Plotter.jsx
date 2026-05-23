@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState } from "react";
 import * as d3 from "d3";
 import { usePlotterData } from "../lib/plotterData";
+import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+
 import { computeImagePositions } from "../lib/gridLayout";
 import {
   CELL_SIZE,
@@ -229,6 +231,12 @@ function handleBrushEnd(event, brush, plotGroup, xScale, yScale, redrawCallback)
     return;
   }
 
+  logChartInteractionEvent({
+    interactionType: "ZOOM_IN",
+    visualizationLibrary: "D3",
+    interactionSource: "brush",
+  });
+
   const newXDomain = [xScale.invert(pixelX0), xScale.invert(pixelX1)];
   const newYDomain = [yScale.invert(pixelY1), yScale.invert(pixelY0)];
 
@@ -261,6 +269,13 @@ function handleWheelZoom(event, margin, xScale, yScale, innerWidth, innerHeight,
 
   if (!isCursorInsidePlot) return;
 
+  const isZoomIn = event.deltaY < 0;
+  logChartInteractionEvent({
+    interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
+    visualizationLibrary: "D3",
+    interactionSource: "wheel",
+  });
+
   const anchorDataX = xScale.invert(cursorX);
   const anchorDataY = yScale.invert(cursorY);
 
@@ -274,6 +289,11 @@ function handleWheelZoom(event, margin, xScale, yScale, innerWidth, innerHeight,
 
 function attachDoubleClickReset(svg, xScale, yScale, originalXDomainRef, originalYDomainRef, redrawCallback) {
   svg.on("dblclick.zoom", () => {
+    logChartInteractionEvent({
+      interactionType: "RESET",
+      visualizationLibrary: "D3",
+      interactionSource: "double_click",
+    });
     resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
     redrawCallback();
   });
@@ -304,16 +324,31 @@ function resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef) {
 function buildPlotControls(xScale, yScale, originalXDomainRef, originalYDomainRef, redrawCallback) {
   return {
     zoomIn: () => {
+      logChartInteractionEvent({
+        interactionType: "ZOOM_IN",
+        visualizationLibrary: "D3",
+        interactionSource: "button",
+      });
       zoomDomainAroundCenter(xScale, ZOOM_SCALE_FACTOR);
       zoomDomainAroundCenter(yScale, ZOOM_SCALE_FACTOR);
       redrawCallback();
     },
     zoomOut: () => {
+      logChartInteractionEvent({
+        interactionType: "ZOOM_OUT",
+        visualizationLibrary: "D3",
+        interactionSource: "button",
+      });
       zoomDomainAroundCenter(xScale, 1 / ZOOM_SCALE_FACTOR);
       zoomDomainAroundCenter(yScale, 1 / ZOOM_SCALE_FACTOR);
       redrawCallback();
     },
     resetZoom: () => {
+      logChartInteractionEvent({
+        interactionType: "RESET",
+        visualizationLibrary: "D3",
+        interactionSource: "button",
+      });
       resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
       redrawCallback();
     },

@@ -7,28 +7,22 @@ export function usePlotterData() {
   const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
-    fetchPlotterData();
+    fetch(DATA_URL)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to fetch data: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((jsonData) => {
+        setPlotterPoints(jsonData);
+        setIsLoading(false);
+      })
+      .catch((fetchError) => {
+        setLoadError(fetchError.message);
+        setIsLoading(false);
+      });
   }, []);
-
-  const fetchPlotterData = async () => {
-    try {
-      setIsLoading(true);
-      setLoadError(null);
-
-      const response = await fetch(DATA_URL);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch data: ${response.status}`);
-      }
-
-      const jsonData = await response.json();
-      setPlotterPoints(jsonData);
-    } catch (fetchError) {
-      setLoadError(fetchError.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   return { plotterPoints, isLoading, loadError };
 }

@@ -19,6 +19,8 @@ import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 
 import PlotterControls from "./PlotterControls";
+import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+
 
 const GRID_COLOR = 0x333333;
 const GRID_ALPHA = 0.45;
@@ -84,6 +86,11 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   });
 
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [isShiftHeld, setIsShiftHeld] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const brushGraphicsRef = useRef(null);
+  const brushStartRef = useRef(null);
 
   const innerWidth =
     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
@@ -91,88 +98,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const innerHeight =
     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
-  /*
-   * INITIALIZE PIXI
-   */
-  useEffect(() => {
-    let cancelled = false;
 
-    async function init() {
-      if (!containerRef.current) return;
-
-      const app = new PixiApp();
-
-      await app.init({
-        width: PLOT_DIMENSIONS.width,
-        height: PLOT_DIMENSIONS.height,
-        background: 0x16213e,
-        antialias: true,
-      });
-
-      if (cancelled) {
-        app.destroy(true);
-        return;
-      }
-
-      containerRef.current.appendChild(app.canvas);
-
-      pixiAppRef.current = app;
-
-      /*
-       * AXES LAYER
-       */
-      const axesLayer = new Container();
-
-      axesLayer.x = PLOT_MARGIN.left;
-      axesLayer.y = PLOT_MARGIN.top;
-
-      app.stage.addChild(axesLayer);
-
-      axesLayerRef.current = axesLayer;
-
-      /*
-       * CONTENT LAYER
-       */
-      const contentLayer = new Container();
-
-      contentLayer.x = PLOT_MARGIN.left;
-      contentLayer.y = PLOT_MARGIN.top;
-
-      app.stage.addChild(contentLayer);
-
-      contentLayerRef.current = contentLayer;
-
-      /*
-       * MASK / CLIPPING
-       */
-      const mask = new Graphics();
-
-      mask.rect(PLOT_MARGIN.left, PLOT_MARGIN.top, innerWidth, innerHeight);
-
-      mask.fill(0xffffff);
-
-      app.stage.addChild(mask);
-
-      contentLayer.mask = mask;
-
-      maskRef.current = mask;
-
-      requestAnimationFrame(() => {
-        // eslint-disable-next-line react-hooks/immutability
-        renderScene();
-      });
-    }
-
-    init();
-
-    return () => {
-      cancelled = true;
-
-      if (pixiAppRef.current) {
-        pixiAppRef.current.destroy(true);
-      }
-    };
-  }, []);
 
   /*
    * GET VIEWPORT SCALES
@@ -322,7 +248,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   /*
    * APPLY TRANSFORM
    */
-  const applyTransform = () => {
+  const applyTransform = useCallback(() => {
     if (!contentLayerRef.current) return;
 
     const contentLayer = contentLayerRef.current;
@@ -337,7 +263,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
      * rerender viewport axes
      */
     renderAxes();
-  };
+  }, [renderAxes]);
 
   /*
    * CLAMP PAN
@@ -366,7 +292,12 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   /*
    * ZOOM
    */
-  const zoom = (direction) => {
+  const zoom = (direction, interactionSource = "button") => {
+    logChartInteractionEvent({
+      interactionType: direction === "in" ? "ZOOM_IN" : "ZOOM_OUT",
+      visualizationLibrary: "Pixi",
+      interactionSource: interactionSource,
+    });
     const currentScale = transformRef.current.scale;
 
     const nextScale =
@@ -399,7 +330,13 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   /*
    * RESET
    */
-  const reset = () => {
+  const reset = useCallback((interactionSource) => {
+    const computedSource = (interactionSource && typeof interactionSource === "string") ? interactionSource : "button";
+    logChartInteractionEvent({
+      interactionType: "RESET",
+      visualizationLibrary: "Pixi",
+      interactionSource: computedSource,
+    });
     transformRef.current = {
       scale: 1,
       x: 0,
@@ -409,7 +346,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     setZoomLevel(1);
 
     applyTransform();
-  };
+  }, [applyTransform]);
 
   /*
    * WHEEL ZOOM
@@ -418,50 +355,268 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     event.preventDefault();
 
     if (event.deltaY > 0) {
-      zoom("out");
+      zoom("out", "wheel");
     } else {
-      zoom("in");
+      zoom("in", "wheel");
     }
-  }, []);
+  }, [zoom]);
 
   /*
-   * DRAG
+   * DRAG & BRUSH EVENTS
    */
   const handleMouseDown = useCallback((event) => {
-    dragRef.current.dragging = true;
+    if (isShiftHeld) {
+      logChartInteractionEvent({
+        interactionType: "PAN",
+        visualizationLibrary: "Pixi",
+        interactionSource: "drag",
+      });
+      setIsDragging(true);
+      dragRef.current.dragging = true;
+      dragRef.current.startX = event.clientX - transformRef.current.x;
+      dragRef.current.startY = event.clientY - transformRef.current.y;
+    } else {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const localX = event.clientX - rect.left - PLOT_MARGIN.left;
+      const localY = event.clientY - rect.top - PLOT_MARGIN.top;
 
-    dragRef.current.startX = event.clientX - transformRef.current.x;
-
-    dragRef.current.startY = event.clientY - transformRef.current.y;
-  }, []);
+      if (localX >= 0 && localX <= innerWidth && localY >= 0 && localY <= innerHeight) {
+        brushStartRef.current = { x: localX, y: localY };
+      }
+    }
+  }, [isShiftHeld, innerWidth, innerHeight]);
 
   const handleMouseMove = useCallback((event) => {
-    if (!dragRef.current.dragging) return;
+    if (dragRef.current.dragging) {
+      const nextX = event.clientX - dragRef.current.startX;
+      const nextY = event.clientY - dragRef.current.startY;
+      const clamped = clampPan(nextX, nextY, transformRef.current.scale);
 
-    let nextX = event.clientX - dragRef.current.startX;
+      transformRef.current.x = clamped.x;
+      transformRef.current.y = clamped.y;
 
-    let nextY = event.clientY - dragRef.current.startY;
+      applyTransform();
+      return;
+    }
 
-    const clamped = clampPan(nextX, nextY, transformRef.current.scale);
+    if (brushStartRef.current) {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const localX = Math.max(0, Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left));
+      const localY = Math.max(0, Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top));
 
-    transformRef.current.x = clamped.x;
-    transformRef.current.y = clamped.y;
+      const x0 = Math.min(brushStartRef.current.x, localX);
+      const y0 = Math.min(brushStartRef.current.y, localY);
+      const w = Math.abs(localX - brushStartRef.current.x);
+      const h = Math.abs(localY - brushStartRef.current.y);
 
-    applyTransform();
-  }, []);
+      const brushGraphics = brushGraphicsRef.current;
+      if (brushGraphics) {
+        brushGraphics.clear();
+        if (w > 0 && h > 0) {
+          brushGraphics.rect(
+            PLOT_MARGIN.left + x0,
+            PLOT_MARGIN.top + y0,
+            w,
+            h
+          );
+          brushGraphics.fill({ color: 0x4493ff, alpha: 0.15 });
+          brushGraphics.stroke({ width: 1.5, color: 0x4493ff });
+        }
+      }
+    }
+  }, [innerWidth, innerHeight]);
 
-  const handleMouseUp = useCallback(() => {
-    dragRef.current.dragging = false;
+  const handleMouseUp = useCallback((event) => {
+    setIsDragging(false);
+    if (dragRef.current.dragging) {
+      dragRef.current.dragging = false;
+      return;
+    }
+
+    if (brushStartRef.current) {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const localX = Math.max(0, Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left));
+      const localY = Math.max(0, Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top));
+
+      const x0 = Math.min(brushStartRef.current.x, localX);
+      const y0 = Math.min(brushStartRef.current.y, localY);
+      const w = Math.abs(localX - brushStartRef.current.x);
+      const h = Math.abs(localY - brushStartRef.current.y);
+
+      if (w >= 5 && h >= 5) {
+        logChartInteractionEvent({
+          interactionType: "ZOOM_IN",
+          visualizationLibrary: "Pixi",
+          interactionSource: "brush",
+        });
+        const currentScale = transformRef.current.scale;
+        const currentX = transformRef.current.x;
+        const currentY = transformRef.current.y;
+
+        const contentX0 = (x0 - currentX) / currentScale;
+        const contentY0 = (y0 - currentY) / currentScale;
+        const contentW = w / currentScale;
+        const contentH = h / currentScale;
+
+        const scaleX = innerWidth / contentW;
+        const scaleY = innerHeight / contentH;
+        const nextScale = Math.max(ZOOM_MIN, Math.min(Math.min(scaleX, scaleY), ZOOM_MAX));
+
+        const rawX = -contentX0 * nextScale;
+        const rawY = -contentY0 * nextScale;
+
+        const clamped = clampPan(rawX, rawY, nextScale);
+        transformRef.current = {
+          scale: nextScale,
+          x: clamped.x,
+          y: clamped.y,
+        };
+        setZoomLevel(nextScale);
+        applyTransform();
+      }
+
+      if (brushGraphicsRef.current) {
+        brushGraphicsRef.current.clear();
+      }
+      brushStartRef.current = null;
+    }
+  }, [innerWidth, innerHeight]);
+
+  /*
+   * SHIFT KEY HANDLER
+   */
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Shift") setIsShiftHeld(true);
+    };
+    const handleKeyUp = (event) => {
+      if (event.key === "Shift") setIsShiftHeld(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
   }, []);
 
   /*
-   * RERENDER
+   * DOUBLE CLICK RESET
+   */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleDblClick = () => {
+      reset("double_click");
+    };
+
+    container.addEventListener("dblclick", handleDblClick);
+    return () => {
+      container.removeEventListener("dblclick", handleDblClick);
+    };
+  }, [reset]);
+
+  /*
+   * INITIALIZE PIXI
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function init() {
+      if (!containerRef.current) return;
+
+      const app = new PixiApp();
+
+      await app.init({
+        width: PLOT_DIMENSIONS.width,
+        height: PLOT_DIMENSIONS.height,
+        background: 0x16213e,
+        antialias: true,
+      });
+
+      if (cancelled) {
+        app.destroy(true);
+        return;
+      }
+
+      containerRef.current.appendChild(app.canvas);
+
+      pixiAppRef.current = app;
+
+      /*
+       * AXES LAYER
+       */
+      const axesLayer = new Container();
+
+      axesLayer.x = PLOT_MARGIN.left;
+      axesLayer.y = PLOT_MARGIN.top;
+
+      app.stage.addChild(axesLayer);
+
+      axesLayerRef.current = axesLayer;
+
+      /*
+       * CONTENT LAYER
+       */
+      const contentLayer = new Container();
+
+      contentLayer.x = PLOT_MARGIN.left;
+      contentLayer.y = PLOT_MARGIN.top;
+
+      app.stage.addChild(contentLayer);
+
+      contentLayerRef.current = contentLayer;
+
+      /*
+       * MASK / CLIPPING
+       */
+      const mask = new Graphics();
+
+      mask.rect(PLOT_MARGIN.left, PLOT_MARGIN.top, innerWidth, innerHeight);
+
+      mask.fill(0xffffff);
+
+      app.stage.addChild(mask);
+
+      contentLayer.mask = mask;
+
+      maskRef.current = mask;
+
+      /*
+       * BRUSH LAYER / GRAPHICS
+       */
+      const brushGraphics = new Graphics();
+      app.stage.addChild(brushGraphics);
+      brushGraphicsRef.current = brushGraphics;
+
+      requestAnimationFrame(() => {
+        renderScene();
+      });
+    }
+
+    init();
+
+    return () => {
+      cancelled = true;
+
+      if (pixiAppRef.current) {
+        pixiAppRef.current.destroy(true);
+      }
+    };
+  }, [renderScene, innerWidth, innerHeight]);
+
+  /*
+   * RERENDER DATA CHANGES
    */
   useEffect(() => {
     if (!plotterPoints.length) return;
 
     renderScene();
-  }, [plotterPoints, imageCount, xGap, yGap]);
+  }, [plotterPoints, imageCount, xGap, yGap, renderScene]);
 
   return (
     <div style={{ position: "relative" }}>
@@ -479,9 +634,11 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onDoubleClick={reset}
         style={{
-          // eslint-disable-next-line react-hooks/refs
-          cursor: dragRef.current.dragging ? "grabbing" : "grab",
+          cursor: isShiftHeld
+            ? (isDragging ? "grabbing" : "grab")
+            : "crosshair",
         }}
       />
 

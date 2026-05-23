@@ -12,6 +12,8 @@ import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
+import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+
 
 const AXIS_TICK_COUNT = 8;
 const EXTENT_PADDING_RATIO = 0.2;
@@ -29,7 +31,7 @@ const BRUSH_STROKE = "#4493ff";
 const BRUSH_STROKE_WIDTH = 1.5;
 const BRUSH_MIN_PIXELS = 5;
 
-function KonvaPlotter({ imageCount, xGap, yGap }) {
+function KonvaPlotter({ imageCount }) {
   const { plotterPoints, isLoading, loadError } = usePlotterData();
 
   if (isLoading) return <div className="plotter-loading">Loading data…</div>;
@@ -39,13 +41,11 @@ function KonvaPlotter({ imageCount, xGap, yGap }) {
     <KonvaCanvas
       plotterPoints={plotterPoints}
       imageCount={imageCount}
-      xGap={xGap}
-      yGap={yGap}
     />
   );
 }
 
-function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
+function KonvaCanvas({ plotterPoints, imageCount }) {
   const [contentScale, setContentScale] = useState(1);
   const [contentOffset, setContentOffset] = useState({ x: 0, y: 0 });
   const [hoveredPoint, setHoveredPoint] = useState(null);
@@ -109,6 +109,12 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       );
       const newScale = clampScale(contentScale * scaleDelta);
 
+      logChartInteractionEvent({
+        interactionType: scaleDelta > 1 ? "ZOOM_IN" : "ZOOM_OUT",
+        visualizationLibrary: "Konva",
+        interactionSource: "wheel",
+      });
+
       const mouseRelX = pointerPosition.x - PLOT_MARGIN.left - contentOffset.x;
       const mouseRelY = pointerPosition.y - PLOT_MARGIN.top - contentOffset.y;
 
@@ -132,6 +138,11 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   );
 
   const handleContentDragStart = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "PAN",
+      visualizationLibrary: "Konva",
+      interactionSource: "drag",
+    });
     setIsDragging(true);
   }, []);
 
@@ -212,6 +223,11 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       brushRect.height < BRUSH_MIN_PIXELS;
 
     if (!isTooSmall) {
+      logChartInteractionEvent({
+        interactionType: "ZOOM_IN",
+        visualizationLibrary: "Konva",
+        interactionSource: "brush",
+      });
       const zoomResult = convertBrushToZoom(
         brushRect,
         contentOffset,
@@ -228,6 +244,11 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   }, [brushRect, contentOffset, contentScale, innerWidth, innerHeight]);
 
   const handleZoomIn = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "ZOOM_IN",
+      visualizationLibrary: "Konva",
+      interactionSource: "button",
+    });
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const newScale = clampScale(contentScale * ZOOM_STEP);
@@ -249,6 +270,11 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   }, [contentScale, contentOffset, innerWidth, innerHeight]);
 
   const handleZoomOut = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "ZOOM_OUT",
+      visualizationLibrary: "Konva",
+      interactionSource: "button",
+    });
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const newScale = clampScale(contentScale / ZOOM_STEP);
@@ -270,16 +296,26 @@ function KonvaCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   }, [contentScale, contentOffset, innerWidth, innerHeight]);
 
   const handleReset = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "RESET",
+      visualizationLibrary: "Konva",
+      interactionSource: "button",
+    });
     setContentScale(1);
     setContentOffset({ x: 0, y: 0 });
   }, []);
 
   const handleDoubleClick = useCallback(() => {
+    logChartInteractionEvent({
+      interactionType: "RESET",
+      visualizationLibrary: "Konva",
+      interactionSource: "double_click",
+    });
     setContentScale(1);
     setContentOffset({ x: 0, y: 0 });
   }, []);
 
-  const isBrushing = brushStartRef.current !== null;
+  const isBrushing = brushRect !== null;
   const stageCursor = isBrushing
     ? "crosshair"
     : isDragging
@@ -787,8 +823,8 @@ function clampContentOffset(
   const scaledWidth = plotInnerWidth * scale;
   const scaledHeight = plotInnerHeight * scale;
 
-  let clampedX = rawX;
-  let clampedY = rawY;
+  let clampedX;
+  let clampedY;
 
   if (scaledWidth <= plotInnerWidth) {
     clampedX = (plotInnerWidth - scaledWidth) / 2;

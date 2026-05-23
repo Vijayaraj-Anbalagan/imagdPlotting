@@ -131,9 +131,11 @@ function DeckGLCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     const centerX = (xExtent[0] + xExtent[1]) / 2;
     const centerY = (yExtent[0] + yExtent[1]) / 2;
 
-    setViewState({
-      target: [centerX, centerY, 0],
-      zoom,
+    Promise.resolve().then(() => {
+      setViewState({
+        target: [centerX, centerY, 0],
+        zoom,
+      });
     });
   }, [xExtent, yExtent, innerWidth, innerHeight]);
 
@@ -177,29 +179,7 @@ function DeckGLCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   /**
    * GRID LINES
    */
-  const gridLayer = useMemo(() => {
-    const lines = [];
 
-    const xTicks = d3.ticks(xExtent[0], xExtent[1], 10);
-
-    const yTicks = d3.ticks(yExtent[0], yExtent[1], 8);
-
-    xTicks.forEach((x) => {
-      lines.push({
-        source: [x, yExtent[0]],
-        target: [x, yExtent[1]],
-      });
-    });
-
-    yTicks.forEach((y) => {
-      lines.push({
-        source: [xExtent[0], y],
-        target: [xExtent[1], y],
-      });
-    });
-
-    return lines;
-  }, [xExtent, yExtent]);
 
   /**
    * LAYERS
