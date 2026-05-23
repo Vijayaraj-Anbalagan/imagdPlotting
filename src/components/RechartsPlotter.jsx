@@ -9,6 +9,10 @@ import PlotterControls from "./PlotterControls";
 const ZOOM_STEP = 1.5;
 const ZOOM_MIN = 0.35;
 const ZOOM_MAX = 14;
+const BRUSH_MIN_PIXELS = 5;
+const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
+const BRUSH_STROKE = "#4493ff";
+const BRUSH_STROKE_WIDTH = 1.5;
 
 const BASE_IMAGE_GAP_X = 10;
 const BASE_IMAGE_GAP_Y = 10;
@@ -44,6 +48,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const [brushRect, setBrushRect] = useState(null);
+  const brushStartRef = useRef(null);
+  const isShiftHeldRef = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -55,6 +62,21 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
     observer.observe(containerRef.current);
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Shift") isShiftHeldRef.current = true;
+    };
+    const handleKeyUp = (event) => {
+      if (event.key === "Shift") isShiftHeldRef.current = false;
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
   }, []);
 
   const height = PLOT_DIMENSIONS.height;
@@ -234,14 +256,22 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         return;
       }
 
-      dragRef.current = {
-        dragging: true,
-        pointerId: event.pointerId,
-        startClientX: event.clientX,
-        startClientY: event.clientY,
-        startTransform: transform,
-      };
+      if (isShiftHeldRef.current) {
+        dragRef.current = {
+          dragging: true,
+          pointerId: event.pointerId,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          startTransform: transform,
+        };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        return;
+      }
 
+      const clampedX = clamp(localX, 0, innerWidth);
+      const clampedY = clamp(localY, 0, innerHeight);
+      brushStartRef.current = { x: clampedX, y: clampedY };
+      setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
     [innerWidth, innerHeight, transform],
@@ -249,6 +279,31 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
   const handlePointerMove = useCallback(
     (event) => {
+      if (brushStartRef.current) {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const localX = clamp(
+          event.clientX - rect.left - PLOT_MARGIN.left,
+          0,
+          innerWidth,
+        );
+        const localY = clamp(
+          event.clientY - rect.top - PLOT_MARGIN.top,
+          0,
+          innerHeight,
+        );
+        const startPoint = brushStartRef.current;
+
+        setBrushRect({
+          x: Math.min(startPoint.x, localX),
+          y: Math.min(startPoint.y, localY),
+          width: Math.abs(localX - startPoint.x),
+          height: Math.abs(localY - startPoint.y),
+        });
+        return;
+      }
+
       if (dragRef.current.dragging) {
         const dx = event.clientX - dragRef.current.startClientX;
         const dy = event.clientY - dragRef.current.startClientY;
@@ -283,11 +338,47 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     [innerWidth, innerHeight, plotterPoints],
   );
 
-  const handlePointerUp = useCallback((event) => {
-    dragRef.current.dragging = false;
-    dragRef.current.pointerId = null;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  const handlePointerUp = useCallback(
+    (event) => {
+      if (brushStartRef.current && brushRect) {
+        const isTooSmall =
+          brushRect.width < BRUSH_MIN_PIXELS ||
+          brushRect.height < BRUSH_MIN_PIXELS;
+
+        if (!isTooSmall) {
+          const newTransform = convertBrushToTransform(
+            brushRect,
+            transform,
+            innerWidth,
+            innerHeight,
+          );
+          setTransform(newTransform);
+        }
+
+        brushStartRef.current = null;
+        setBrushRect(null);
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        return;
+      }
+
+      dragRef.current.dragging = false;
+      dragRef.current.pointerId = null;
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    },
+    [brushRect, transform, innerWidth, innerHeight],
+  );
+
+  const handleDoubleClick = useCallback(() => {
+    setTransform({ scale: 1, x: 0, y: 0 });
+    setHoveredPoint(null);
   }, []);
+
+  const isBrushing = brushStartRef.current !== null;
+  const stageCursor = isBrushing
+    ? "crosshair"
+    : dragRef.current.dragging
+      ? "grabbing"
+      : "crosshair";
 
   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
 
@@ -304,12 +395,18 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         ref={svgRef}
         width={containerWidth}
         height={height}
-        style={{ display: "block", touchAction: "none", userSelect: "none" }}
+        style={{
+          display: "block",
+          touchAction: "none",
+          userSelect: "none",
+          cursor: stageCursor,
+        }}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onDoubleClick={handleDoubleClick}
       >
         <defs>
           <clipPath id={clipId}>
@@ -380,6 +477,21 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
             stroke="#555"
             pointerEvents="none"
           />
+
+          {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
+            <rect
+              x={brushRect.x}
+              y={brushRect.y}
+              width={brushRect.width}
+              height={brushRect.height}
+              fill={BRUSH_FILL}
+              stroke={BRUSH_STROKE}
+              strokeWidth={BRUSH_STROKE_WIDTH}
+              rx={2}
+              ry={2}
+              pointerEvents="none"
+            />
+          )}
         </g>
       </svg>
 
@@ -576,6 +688,33 @@ function clampTransform(transform, innerWidth, innerHeight) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function convertBrushToTransform(
+  brushPixelRect,
+  currentTransform,
+  plotInnerWidth,
+  plotInnerHeight,
+) {
+  const contentX0 =
+    (brushPixelRect.x - currentTransform.x) / currentTransform.scale;
+  const contentY0 =
+    (brushPixelRect.y - currentTransform.y) / currentTransform.scale;
+  const contentBrushWidth = brushPixelRect.width / currentTransform.scale;
+  const contentBrushHeight = brushPixelRect.height / currentTransform.scale;
+
+  const fitScaleX = plotInnerWidth / contentBrushWidth;
+  const fitScaleY = plotInnerHeight / contentBrushHeight;
+  const newScale = clamp(Math.min(fitScaleX, fitScaleY), ZOOM_MIN, ZOOM_MAX);
+
+  const rawX = -contentX0 * newScale;
+  const rawY = -contentY0 * newScale;
+
+  return clampTransform(
+    { scale: newScale, x: rawX, y: rawY },
+    plotInnerWidth,
+    plotInnerHeight,
+  );
 }
 
 function formatTick(value) {
