@@ -24,3 +24,14 @@ export const PLOT_MARGIN = {
 };
 
 export const DATA_URL = "/data/data.json";
+
+export const BRUSH_ZOOM = {
+  fill: "rgba(68, 147, 255, 0.15)",
+  stroke: "#4493ff",
+  strokeWidth: 1.5,
+  minimumSelectionPixels: 5,
+};
+
+export const ZOOM_SCALE_FACTOR = 1.5;
+
+export const WHEEL_ZOOM_SENSITIVITY = 0.002;

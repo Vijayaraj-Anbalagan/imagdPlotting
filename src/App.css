@@ -160,3 +160,26 @@ body {
   background: #3a3a5e;
   color: #ddd;
 }
+
+.zoom-button.active {
+  background: #4a4a7e;
+  color: #fff;
+  border-color: #6a6aae;
+}
+
+/* D3 Brush Zoom Overlay */
+.d3-brush .overlay {
+  cursor: crosshair;
+}
+
+.d3-brush .selection {
+  fill: rgba(68, 147, 255, 0.15);
+  stroke: #4493ff;
+  stroke-width: 1.5;
+  rx: 2;
+  ry: 2;
+}
+
+.d3-brush .handle {
+  display: none;
+}
