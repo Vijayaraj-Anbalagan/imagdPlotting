@@ -54,6 +54,67 @@ body {
   border-color: #6a6aae;
 }
 
+.tab-button.disabled,
+.tab-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+  background: #222;
+  color: #555;
+  border-color: #333;
+}
+
+/* Data Point Count Control */
+.data-point-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background: #1e1e38;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.data-point-label {
+  font-size: 0.85rem;
+  color: #bbb;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.data-point-slider {
+  flex: 1;
+  min-width: 200px;
+  accent-color: #6a6aae;
+  cursor: pointer;
+}
+
+.data-point-input {
+  width: 72px;
+  padding: 4px 8px;
+  border: 1px solid #444;
+  background: #2a2a3e;
+  color: #e0e0e0;
+  font-size: 0.85rem;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.data-point-input:focus {
+  outline: none;
+  border-color: #6a6aae;
+}
+
+.data-point-count-badge {
+  font-size: 0.75rem;
+  color: #888;
+  background: #2a2a3e;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
 /* Image Count Selector */
 .image-count-selector {
   display: flex;

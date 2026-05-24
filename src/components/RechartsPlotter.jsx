@@ -4,6 +4,11 @@ import * as d3 from "d3";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
+import {
+  computeAdaptiveCellSize,
+  filterVisiblePoints,
+  computeEffectiveImageCount,
+} from "../lib/densityLayout";
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
@@ -20,11 +25,13 @@ const BRUSH_STROKE_WIDTH = 1.5;
 const BASE_IMAGE_GAP_X = 10;
 const BASE_IMAGE_GAP_Y = 10;
 
-function RechartsPlotter({ imageCount, xGap, yGap }) {
-  const { plotterPoints, isLoading, loadError } = usePlotterData();
+function RechartsPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
+  const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
 
-  if (isLoading) return <div className="plotter-loading">Loading data…</div>;
-  if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
+  const plotterPoints = syntheticPoints || fetchedPoints;
+
+  if (!syntheticPoints && isLoading) return <div className="plotter-loading">Loading data…</div>;
+  if (!syntheticPoints && loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
     <RechartsCanvas
@@ -164,6 +171,36 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const clipId = useMemo(
     () => `recharts-clip-${Math.random().toString(36).slice(2)}`,
     [],
+  );
+
+  const adaptiveCellSizeForRender = useMemo(() => {
+    /* Compute from base scales (content-space) so the cell size is set at
+       the default zoom level. The SVG transform then naturally magnifies
+       images when zoomed in, revealing more detail. */
+    return computeAdaptiveCellSize(
+      normalizedPoints,
+      (val) => baseXScale(val),
+      (val) => baseYScale(val),
+    );
+  }, [normalizedPoints, baseXScale, baseYScale]);
+
+  const visiblePointsForRender = useMemo(() => {
+    /* Viewport culling still needs screen-space coordinates. */
+    const xScreenFn = (val) => baseXScale(val) * transform.scale + transform.x;
+    const yScreenFn = (val) => baseYScale(val) * transform.scale + transform.y;
+    return filterVisiblePoints(
+      normalizedPoints,
+      xScreenFn,
+      yScreenFn,
+      innerWidth,
+      innerHeight,
+      adaptiveCellSizeForRender * transform.scale,
+    );
+  }, [normalizedPoints, baseXScale, baseYScale, transform, innerWidth, innerHeight, adaptiveCellSizeForRender]);
+
+  const effectiveImageCountForRender = useMemo(
+    () => computeEffectiveImageCount(adaptiveCellSizeForRender * transform.scale, imageCount),
+    [adaptiveCellSizeForRender, transform.scale, imageCount],
   );
 
   const zoomTo = useCallback(
@@ -497,13 +534,14 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
           <g clipPath={`url(#${clipId})`}>
             <g transform={contentTransform}>
-              {normalizedPoints.map((point) => (
+              {visiblePointsForRender.map((point) => (
                 <ImagePoint
                   key={point.id}
                   point={point}
                   baseXScale={baseXScale}
                   baseYScale={baseYScale}
-                  imageCount={imageCount}
+                  imageCount={effectiveImageCountForRender}
+                  adaptiveCellSize={adaptiveCellSizeForRender}
                 />
               ))}
             </g>
@@ -560,15 +598,16 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   );
 }
 
-function ImagePoint({ point, baseXScale, baseYScale, imageCount }) {
+function ImagePoint({ point, baseXScale, baseYScale, imageCount, adaptiveCellSize }) {
   const centerX = baseXScale(point.scaledX);
   const centerY = baseYScale(point.scaledY);
+  const cellSize = adaptiveCellSize ?? CELL_SIZE;
 
   const positions = computeImagePositions(
     centerX,
     centerY,
-    CELL_SIZE,
-    CELL_SIZE,
+    cellSize,
+    cellSize,
     imageCount,
   );
 

@@ -7,9 +7,24 @@ export const LIBRARIES = [
   "ECharts",
 ];
 
+export const DISABLED_LIBRARIES = ["DeckGL", "ECharts"];
+
 export const IMAGE_COUNTS = [1, 2, 4, 8];
 
+export const DATA_POINT_LIMITS = {
+  min: 1,
+  max: 2000,
+  defaultCount: 16,
+};
+
 export const CELL_SIZE = 50;
+
+export const ADAPTIVE_CELL_SIZE = {
+  max: 50,
+  min: 4,
+  gapRatio: 0.78,
+  collapseThreshold: 18,
+};
 
 export const PLOT_DIMENSIONS = {
   width: 900,

@@ -1,17 +1,21 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Navbar from "./components/Navbar";
 import ImageCountSelector from "./components/ImageCountSelector";
+import DataPointCountControl from "./components/DataPointCountControl";
 import RechartsPlotter from "./components/RechartsPlotter";
 import D3Plotter from "./components/D3Plotter";
 import PixiPlotter from "./components/PixiPlotter";
 import KonvaPlotter from "./components/KonvaPlotter";
-import DeckGLPlotter from "./components/DeckGLPlotter";
-import EChartsPlotter from "./components/EChartsPlotter";
+import { generateSyntheticPoints } from "./lib/syntheticDataGenerator";
+import { DATA_POINT_LIMITS } from "./lib/constants";
 import "./App.css";
 
 function App() {
   const [activeTab, setActiveTab] = useState("Recharts");
   const [imageCount, setImageCount] = useState(1);
+  const [dataPointCount, setDataPointCount] = useState(
+    DATA_POINT_LIMITS.defaultCount,
+  );
   const [appliedXGap, setAppliedXGap] = useState(10);
   const [appliedYGap, setAppliedYGap] = useState(10);
   const [draftXGap, setDraftXGap] = useState(10);
@@ -19,75 +23,35 @@ function App() {
 
   const hasChanges = draftXGap !== appliedXGap || draftYGap !== appliedYGap;
 
-  const handleUpdate = () => {
+  const syntheticPoints = useMemo(
+    () => generateSyntheticPoints(dataPointCount),
+    [dataPointCount],
+  );
+
+  const handleGapUpdate = () => {
     setAppliedXGap(draftXGap);
     setAppliedYGap(draftYGap);
   };
 
   const renderActivePlotter = () => {
+    const plotterProps = {
+      imageCount,
+      xGap: appliedXGap,
+      yGap: appliedYGap,
+      syntheticPoints,
+    };
+
     switch (activeTab) {
       case "Recharts":
-        return (
-          <RechartsPlotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
-
+        return <RechartsPlotter {...plotterProps} />;
       case "D3":
-        return (
-          <D3Plotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
-
+        return <D3Plotter {...plotterProps} />;
       case "PixiJS":
-        return (
-          <PixiPlotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
-
+        return <PixiPlotter {...plotterProps} />;
       case "Konva":
-        return (
-          <KonvaPlotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
-
-      case "DeckGL":
-        return (
-          <DeckGLPlotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
-
-      case "ECharts":
-        return (
-          <EChartsPlotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
-
+        return <KonvaPlotter {...plotterProps} />;
       default:
-        return (
-          <RechartsPlotter
-            imageCount={imageCount}
-            xGap={appliedXGap}
-            yGap={appliedYGap}
-          />
-        );
+        return <RechartsPlotter {...plotterProps} />;
     }
   };
 
@@ -96,6 +60,11 @@ function App() {
       <h1 className="app-title">Image Plotting System PoC</h1>
 
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+
+      <DataPointCountControl
+        dataPointCount={dataPointCount}
+        onDataPointCountChange={setDataPointCount}
+      />
 
       <ImageCountSelector
         imageCount={imageCount}
@@ -133,7 +102,7 @@ function App() {
           <span style={{ color: "#888", width: "20px" }}>{draftYGap}</span>
         </div>
         <button
-          onClick={handleUpdate}
+          onClick={handleGapUpdate}
           disabled={!hasChanges}
           style={{
             padding: "5px 15px",

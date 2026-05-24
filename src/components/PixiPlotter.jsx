@@ -17,6 +17,11 @@ import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
+import {
+  computeAdaptiveCellSize,
+  filterVisiblePoints,
+  computeEffectiveImageCount,
+} from "../lib/densityLayout";
 
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
@@ -35,14 +40,16 @@ const ZOOM_MAX = 8;
 
 const ZOOM_STEP = 1.4;
 
-function PixiPlotter({ imageCount, xGap, yGap }) {
-  const { plotterPoints, isLoading, loadError } = usePlotterData();
+function PixiPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
+  const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
 
-  if (isLoading) {
+  const plotterPoints = syntheticPoints || fetchedPoints;
+
+  if (!syntheticPoints && isLoading) {
     return <div>Loading...</div>;
   }
 
-  if (loadError) {
+  if (!syntheticPoints && loadError) {
     return <div>Error: {loadError}</div>;
   }
 
@@ -237,15 +244,36 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     await Assets.load(uniqueImages);
 
     /*
-     * DRAW POINTS USING BASE SCALE
+     * DRAW POINTS WITH ADAPTIVE SIZING
      */
+    const adaptiveCellSize = computeAdaptiveCellSize(
+      scaledPoints,
+      (val) => baseXScale(val),
+      (val) => baseYScale(val),
+    );
+
+    const visibleScaledPoints = filterVisiblePoints(
+      scaledPoints,
+      (val) => baseXScale(val),
+      (val) => baseYScale(val),
+      innerWidth,
+      innerHeight,
+      adaptiveCellSize,
+    );
+
+    const effectiveImageCount = computeEffectiveImageCount(
+      adaptiveCellSize,
+      imageCount,
+    );
+
     drawPoints(
       contentLayer,
-      scaledPoints,
+      visibleScaledPoints,
       baseXScale,
       baseYScale,
-      imageCount,
+      effectiveImageCount,
       tooltipRef,
+      adaptiveCellSize,
     );
 
     applyTransform();
@@ -746,7 +774,7 @@ function drawAxesLabels(layer, xScale, yScale, innerWidth, innerHeight) {
 /*
  * POINTS
  */
-function drawPoints(layer, points, xScale, yScale, imageCount, tooltipRef) {
+function drawPoints(layer, points, xScale, yScale, imageCount, tooltipRef, cellSize = CELL_SIZE) {
   points.forEach((point) => {
     const x = xScale(point.scaledX);
 
@@ -755,8 +783,8 @@ function drawPoints(layer, points, xScale, yScale, imageCount, tooltipRef) {
     const positions = computeImagePositions(
       x,
       y,
-      CELL_SIZE,
-      CELL_SIZE,
+      cellSize,
+      cellSize,
       imageCount,
     );
 

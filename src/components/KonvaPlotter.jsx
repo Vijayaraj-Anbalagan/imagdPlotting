@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   Stage,
   Layer,
@@ -11,6 +11,11 @@ import {
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
+import {
+  computeAdaptiveCellSize,
+  filterVisiblePoints,
+  computeEffectiveImageCount,
+} from "../lib/densityLayout";
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
@@ -32,11 +37,13 @@ const BRUSH_STROKE = "#4493ff";
 const BRUSH_STROKE_WIDTH = 1.5;
 const BRUSH_MIN_PIXELS = 5;
 
-function KonvaPlotter({ imageCount }) {
-  const { plotterPoints, isLoading, loadError } = usePlotterData();
+function KonvaPlotter({ imageCount, syntheticPoints }) {
+  const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
 
-  if (isLoading) return <div className="plotter-loading">Loading data…</div>;
-  if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
+  const plotterPoints = syntheticPoints || fetchedPoints;
+
+  if (!syntheticPoints && isLoading) return <div className="plotter-loading">Loading data…</div>;
+  if (!syntheticPoints && loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
     <KonvaCanvas
@@ -91,6 +98,32 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
       setBrushRect(null);
     }
   }, [isPanMode]);
+
+  const adaptiveCellSizeForRender = useMemo(() => {
+    /* Compute from base scales (content-space) so the cell size is set at
+       the default zoom level. The Konva Group scale then naturally magnifies
+       images when zoomed in, revealing more detail. */
+    return computeAdaptiveCellSize(plotterPoints, xScale, yScale);
+  }, [plotterPoints, xScale, yScale]);
+
+  const visiblePointsForRender = useMemo(() => {
+    /* Viewport culling still needs screen-space coordinates. */
+    const xScreenFn = (val) => xScale(val) * contentScale + contentOffset.x;
+    const yScreenFn = (val) => yScale(val) * contentScale + contentOffset.y;
+    return filterVisiblePoints(
+      plotterPoints,
+      xScreenFn,
+      yScreenFn,
+      innerWidth,
+      innerHeight,
+      adaptiveCellSizeForRender * contentScale,
+    );
+  }, [plotterPoints, xScale, yScale, contentScale, contentOffset, innerWidth, innerHeight, adaptiveCellSizeForRender]);
+
+  const effectiveImageCountForRender = useMemo(
+    () => computeEffectiveImageCount(adaptiveCellSizeForRender * contentScale, imageCount),
+    [adaptiveCellSizeForRender, contentScale, imageCount],
+  );
 
   const handleWheel = useCallback(
     (event) => {
@@ -367,13 +400,14 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
             onDragMove={handleContentDragMove}
             onDragEnd={handleContentDragEnd}
           >
-            {plotterPoints.map((point) => (
+            {visiblePointsForRender.map((point) => (
               <ImagePointGroup
                 key={point.id}
                 point={point}
                 xScale={xScale}
                 yScale={yScale}
-                imageCount={imageCount}
+                imageCount={effectiveImageCountForRender}
+                cellSize={adaptiveCellSizeForRender}
                 onHover={setHoveredPoint}
                 onCursorMove={setCursorPosition}
               />
@@ -671,16 +705,18 @@ function ImagePointGroup({
   xScale,
   yScale,
   imageCount,
+  cellSize,
   onHover,
   onCursorMove,
 }) {
   const centerX = xScale(point.x);
   const centerY = yScale(point.y);
+  const resolvedCellSize = cellSize ?? CELL_SIZE;
   const positions = computeImagePositions(
     centerX,
     centerY,
-    CELL_SIZE,
-    CELL_SIZE,
+    resolvedCellSize,
+    resolvedCellSize,
     imageCount,
   );
 

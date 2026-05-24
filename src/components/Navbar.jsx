@@ -1,17 +1,23 @@
-import { LIBRARIES } from "../lib/constants";
+import { LIBRARIES, DISABLED_LIBRARIES } from "../lib/constants";
 
 function Navbar({ activeTab, setActiveTab }) {
   return (
     <div className="tab-container">
-      {LIBRARIES.map((libraryName) => (
-        <button
-          key={libraryName}
-          className={`tab-button ${activeTab === libraryName ? "active" : ""}`}
-          onClick={() => setActiveTab(libraryName)}
-        >
-          {libraryName}
-        </button>
-      ))}
+      {LIBRARIES.map((libraryName) => {
+        const isDisabled = DISABLED_LIBRARIES.includes(libraryName);
+
+        return (
+          <button
+            key={libraryName}
+            className={`tab-button ${activeTab === libraryName ? "active" : ""} ${isDisabled ? "disabled" : ""}`}
+            onClick={() => !isDisabled && setActiveTab(libraryName)}
+            disabled={isDisabled}
+            title={isDisabled ? `${libraryName} is disabled for this test` : ""}
+          >
+            {libraryName}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -13,15 +13,22 @@ import {
   ZOOM_SCALE_FACTOR,
   WHEEL_ZOOM_SENSITIVITY,
 } from "../lib/constants";
+import {
+  computeAdaptiveCellSize,
+  filterVisiblePoints,
+  computeEffectiveImageCount,
+} from "../lib/densityLayout";
 import PlotterControls from "./PlotterControls";
 
 /* ─── Entry Component ───────────────────────────────────────────── */
 
-function D3Plotter({ imageCount, xGap, yGap }) {
-  const { plotterPoints, isLoading, loadError } = usePlotterData();
+function D3Plotter({ imageCount, xGap, yGap, syntheticPoints }) {
+  const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
 
-  if (isLoading) return <div className="plotter-loading">Loading data…</div>;
-  if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
+  const plotterPoints = syntheticPoints || fetchedPoints;
+
+  if (!syntheticPoints && isLoading) return <div className="plotter-loading">Loading data…</div>;
+  if (!syntheticPoints && loadError) return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
     <D3PlotCanvas
@@ -166,13 +173,38 @@ function initializePlot(
 
   renderAxes(rootGroup, xScale, yScale, innerWidth, innerHeight);
   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
+
+  const initialVisiblePoints = filterVisiblePoints(
+    plotterPoints,
+    (val) => xScale(val),
+    (val) => yScale(val),
+    innerWidth,
+    innerHeight,
+    CELL_SIZE,
+  );
+
+  const baseCellSize = computeAdaptiveCellSize(
+    initialVisiblePoints,
+    (val) => xScale(val),
+    (val) => yScale(val),
+  );
+
+  const originalDomainSpanX = xScale.domain()[1] - xScale.domain()[0];
+  const originalDomainSpanY = yScale.domain()[1] - yScale.domain()[0];
+
+  const initialEffectiveImageCount = computeEffectiveImageCount(
+    baseCellSize,
+    imageCount,
+  );
+
   renderImagePoints(
     contentGroup,
-    plotterPoints,
+    initialVisiblePoints,
     xScale,
     yScale,
-    imageCount,
+    initialEffectiveImageCount,
     tooltipElement,
+    baseCellSize,
   );
 
   const redrawContext = {
@@ -185,8 +217,9 @@ function initializePlot(
     plotterPoints,
     imageCount,
     tooltipElement,
-    originalXDomain: originalXDomainRef.current,
-    originalYDomain: originalYDomainRef.current,
+    baseCellSize,
+    originalDomainSpanX,
+    originalDomainSpanY,
   };
 
   const triggerRedraw = () => redrawPlotContent(redrawContext);
@@ -451,15 +484,33 @@ function redrawPlotContent(context) {
     plotterPoints,
     imageCount,
     tooltipElement,
-    originalXDomain,
-    originalYDomain,
+    baseCellSize,
+    originalDomainSpanX,
+    originalDomainSpanY,
   } = context;
 
-  const zoomedCellSize = computeZoomScaledCellSize(
-    xScale,
-    yScale,
-    originalXDomain,
-    originalYDomain,
+  /* Compute zoom factor from domain ratio so images grow when zoomed in,
+     matching the transform-based magnification of Recharts/Konva/PixiJS. */
+  const currentSpanX = xScale.domain()[1] - xScale.domain()[0];
+  const currentSpanY = yScale.domain()[1] - yScale.domain()[0];
+  const zoomFactorX = originalDomainSpanX / currentSpanX;
+  const zoomFactorY = originalDomainSpanY / currentSpanY;
+  const zoomFactor = Math.min(zoomFactorX, zoomFactorY);
+
+  const zoomedCellSize = baseCellSize * zoomFactor;
+
+  const visiblePoints = filterVisiblePoints(
+    plotterPoints,
+    (val) => xScale(val),
+    (val) => yScale(val),
+    innerWidth,
+    innerHeight,
+    zoomedCellSize,
+  );
+
+  const effectiveImageCount = computeEffectiveImageCount(
+    zoomedCellSize,
+    imageCount,
   );
 
   contentGroup.selectAll(".grid-lines, .image-point").remove();
@@ -467,34 +518,15 @@ function redrawPlotContent(context) {
   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
   renderImagePoints(
     contentGroup,
-    plotterPoints,
+    visiblePoints,
     xScale,
     yScale,
-    imageCount,
+    effectiveImageCount,
     tooltipElement,
     zoomedCellSize,
   );
 
   updateAxes(rootGroup, xScale, yScale);
-}
-
-function computeZoomScaledCellSize(xScale, yScale, originalXDomain, originalYDomain) {
-  const originalXSpan = originalXDomain[1] - originalXDomain[0];
-  const originalYSpan = originalYDomain[1] - originalYDomain[0];
-
-  const currentXDomain = xScale.domain();
-  const currentYDomain = yScale.domain();
-  const currentXSpan = currentXDomain[1] - currentXDomain[0];
-  const currentYSpan = currentYDomain[1] - currentYDomain[0];
-
-  const xZoomFactor = originalXSpan / currentXSpan;
-  const yZoomFactor = originalYSpan / currentYSpan;
-  const uniformZoomFactor = Math.sqrt(xZoomFactor * yZoomFactor);
-
-  const MAX_ZOOM_SCALE = 5;
-  const clampedFactor = Math.min(Math.max(uniformZoomFactor, 0.3), MAX_ZOOM_SCALE);
-
-  return CELL_SIZE * clampedFactor;
 }
 
 /* ─── Axes ──────────────────────────────────────────────────────── */
