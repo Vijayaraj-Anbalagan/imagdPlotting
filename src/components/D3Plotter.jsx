@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import * as d3 from "d3";
 import { usePlotterData } from "../lib/plotterData";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+import { useInteractionMode, INTERACTION_MODES } from "../lib/interactionMode";
 
 import { computeImagePositions } from "../lib/gridLayout";
 import {
@@ -39,11 +40,17 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const tooltipRef = useRef(null);
   const containerRef = useRef(null);
   const plotControlsRef = useRef(null);
+  const interactionCleanupRef = useRef(null);
 
   const originalXDomainRef = useRef(null);
   const originalYDomainRef = useRef(null);
 
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
+  const {
+    interactionMode,
+    setInteractionMode,
+    isZoomMode,
+  } = useInteractionMode();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -60,7 +67,7 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   useEffect(() => {
     if (!svgRef.current || plotterPoints.length === 0) return;
 
-    plotControlsRef.current = initializePlot(
+    const initResult = initializePlot(
       svgRef.current,
       tooltipRef.current,
       plotterPoints,
@@ -71,11 +78,24 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       originalXDomainRef,
       originalYDomainRef,
     );
+
+    plotControlsRef.current = initResult.controls;
+    interactionCleanupRef.current = initResult.setActiveInteractionMode;
+
+    initResult.setActiveInteractionMode(interactionMode);
   }, [plotterPoints, imageCount, containerWidth, xGap, yGap]);
+
+  useEffect(() => {
+    if (interactionCleanupRef.current) {
+      interactionCleanupRef.current(interactionMode);
+    }
+  }, [interactionMode]);
 
   const handleZoomIn = () => plotControlsRef.current?.zoomIn();
   const handleZoomOut = () => plotControlsRef.current?.zoomOut();
   const handleReset = () => plotControlsRef.current?.resetZoom();
+
+  const cursorStyle = isZoomMode ? "crosshair" : "grab";
 
   return (
     <div ref={containerRef} style={{ position: "relative" }}>
@@ -83,8 +103,10 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onReset={handleReset}
+        interactionMode={interactionMode}
+        onModeChange={setInteractionMode}
       />
-      <svg ref={svgRef} />
+      <svg ref={svgRef} style={{ cursor: cursorStyle }} />
       <div
         ref={tooltipRef}
         className="plotter-tooltip"
@@ -169,11 +191,37 @@ function initializePlot(
 
   const triggerRedraw = () => redrawPlotContent(redrawContext);
 
-  attachBrushZoom(plotGroup, xScale, yScale, innerWidth, innerHeight, triggerRedraw);
+  const brushGroup = plotGroup.append("g").attr("class", "d3-brush");
+  const panOverlay = plotGroup.append("rect")
+    .attr("class", "d3-pan-overlay")
+    .attr("width", innerWidth)
+    .attr("height", innerHeight)
+    .attr("fill", "transparent")
+    .style("display", "none");
+
+  const brush = buildBrush(xScale, yScale, innerWidth, innerHeight, brushGroup, triggerRedraw);
+  const panDrag = buildPanDrag(xScale, yScale, innerWidth, innerHeight, triggerRedraw);
+
   attachWheelZoom(svg, margin, xScale, yScale, innerWidth, innerHeight, triggerRedraw);
   attachDoubleClickReset(svg, xScale, yScale, originalXDomainRef, originalYDomainRef, triggerRedraw);
 
-  return buildPlotControls(xScale, yScale, originalXDomainRef, originalYDomainRef, triggerRedraw);
+  const setActiveInteractionMode = (mode) => {
+    if (mode === INTERACTION_MODES.ZOOM) {
+      panOverlay.style("display", "none");
+      panOverlay.on(".drag", null);
+      brushGroup.style("display", null);
+      brushGroup.call(brush);
+    } else {
+      brushGroup.style("display", "none");
+      brushGroup.on(".brush", null);
+      panOverlay.style("display", null);
+      panOverlay.call(panDrag);
+    }
+  };
+
+  const controls = buildPlotControls(xScale, yScale, originalXDomainRef, originalYDomainRef, triggerRedraw);
+
+  return { controls, setActiveInteractionMode };
 }
 
 /* ─── Scale Builders ────────────────────────────────────────────── */
@@ -202,22 +250,18 @@ function buildYScale(plotterPoints, innerHeight, yGap) {
 
 /* ─── Brush Zoom ────────────────────────────────────────────────── */
 
-function attachBrushZoom(plotGroup, xScale, yScale, innerWidth, innerHeight, redrawCallback) {
+function buildBrush(xScale, yScale, innerWidth, innerHeight, brushGroup, redrawCallback) {
   const brush = d3
     .brush()
     .extent([[0, 0], [innerWidth, innerHeight]])
-    .filter((event) => !event.shiftKey && !event.ctrlKey)
     .on("end", (event) => {
-      handleBrushEnd(event, brush, plotGroup, xScale, yScale, redrawCallback);
+      handleBrushEnd(event, brush, brushGroup, xScale, yScale, redrawCallback);
     });
 
-  plotGroup
-    .append("g")
-    .attr("class", "d3-brush")
-    .call(brush);
+  return brush;
 }
 
-function handleBrushEnd(event, brush, plotGroup, xScale, yScale, redrawCallback) {
+function handleBrushEnd(event, brush, brushGroup, xScale, yScale, redrawCallback) {
   const selection = event.selection;
   if (!selection) return;
 
@@ -227,7 +271,7 @@ function handleBrushEnd(event, brush, plotGroup, xScale, yScale, redrawCallback)
 
   if (selectionWidth < BRUSH_ZOOM.minimumSelectionPixels ||
       selectionHeight < BRUSH_ZOOM.minimumSelectionPixels) {
-    plotGroup.select(".d3-brush").call(brush.move, null);
+    brushGroup.call(brush.move, null);
     return;
   }
 
@@ -243,8 +287,47 @@ function handleBrushEnd(event, brush, plotGroup, xScale, yScale, redrawCallback)
   xScale.domain(newXDomain);
   yScale.domain(newYDomain);
 
-  plotGroup.select(".d3-brush").call(brush.move, null);
+  brushGroup.call(brush.move, null);
   redrawCallback();
+}
+
+/* ─── Pan Drag ──────────────────────────────────────────────────── */
+
+function buildPanDrag(xScale, yScale, innerWidth, innerHeight, redrawCallback) {
+  let startXDomain = null;
+  let startYDomain = null;
+
+  return d3.drag()
+    .on("start", () => {
+      logChartInteractionEvent({
+        interactionType: "PAN",
+        visualizationLibrary: "D3",
+        interactionSource: "drag",
+      });
+      startXDomain = xScale.domain().slice();
+      startYDomain = yScale.domain().slice();
+    })
+    .on("drag", (event) => {
+      if (!startXDomain || !startYDomain) return;
+
+      const xSpanPerPixel = (startXDomain[1] - startXDomain[0]) / innerWidth;
+      const ySpanPerPixel = (startYDomain[1] - startYDomain[0]) / innerHeight;
+
+      const domainDeltaX = -event.dx * xSpanPerPixel;
+      const domainDeltaY = event.dy * ySpanPerPixel;
+
+      const currentXDomain = xScale.domain();
+      const currentYDomain = yScale.domain();
+
+      xScale.domain([currentXDomain[0] + domainDeltaX, currentXDomain[1] + domainDeltaX]);
+      yScale.domain([currentYDomain[0] + domainDeltaY, currentYDomain[1] + domainDeltaY]);
+
+      redrawCallback();
+    })
+    .on("end", () => {
+      startXDomain = null;
+      startYDomain = null;
+    });
 }
 
 /* ─── Wheel Zoom ────────────────────────────────────────────────── */
@@ -285,7 +368,7 @@ function handleWheelZoom(event, margin, xScale, yScale, innerWidth, innerHeight,
   redrawCallback();
 }
 
-/* ─── Pan (Shift + Drag) ───────────────────────────────────────── */
+/* ─── Double-Click Reset ───────────────────────────────────────── */
 
 function attachDoubleClickReset(svg, xScale, yScale, originalXDomainRef, originalYDomainRef, redrawCallback) {
   svg.on("dblclick.zoom", () => {

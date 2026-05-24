@@ -6,6 +6,7 @@ import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+import { useInteractionMode } from "../lib/interactionMode";
 
 
 const ZOOM_STEP = 1.5;
@@ -53,7 +54,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const [brushRect, setBrushRect] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const brushStartRef = useRef(null);
-  const isShiftHeldRef = useRef(false);
+
+  const {
+    interactionMode,
+    setInteractionMode,
+    isZoomMode,
+    isPanMode,
+  } = useInteractionMode();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -67,20 +74,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     return () => observer.disconnect();
   }, []);
 
+  /* Cancel in-progress brush when switching to pan mode */
   useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === "Shift") isShiftHeldRef.current = true;
-    };
-    const handleKeyUp = (event) => {
-      if (event.key === "Shift") isShiftHeldRef.current = false;
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
+    if (isPanMode) {
+      brushStartRef.current = null;
+      setBrushRect(null);
+    }
+  }, [isPanMode]);
 
   const height = PLOT_DIMENSIONS.height;
   const innerWidth = Math.max(
@@ -281,7 +281,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         return;
       }
 
-      if (isShiftHeldRef.current) {
+      if (isPanMode) {
         logChartInteractionEvent({
           interactionType: "PAN",
           visualizationLibrary: "Recharts",
@@ -305,7 +305,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
-    [innerWidth, innerHeight, transform],
+    [innerWidth, innerHeight, transform, isPanMode],
   );
 
   const handlePointerMove = useCallback(
@@ -415,12 +415,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     setHoveredPoint(null);
   }, []);
 
-  const isBrushing = brushRect !== null;
-  const stageCursor = isBrushing
-    ? "crosshair"
-    : isDragging
-      ? "grabbing"
-      : "crosshair";
+  const stageCursor = isPanMode
+    ? (isDragging ? "grabbing" : "grab")
+    : "crosshair";
 
   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
 
@@ -431,6 +428,8 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onReset={handleReset}
+        interactionMode={interactionMode}
+        onModeChange={setInteractionMode}
       />
 
       <svg

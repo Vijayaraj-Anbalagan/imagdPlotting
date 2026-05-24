@@ -167,9 +167,44 @@ body {
   border-color: #6a6aae;
 }
 
+/* Mode Toggle Buttons */
+.mode-button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid #444;
+  background: #2a2a3e;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.mode-button:hover {
+  background: #3a3a5e;
+  color: #ddd;
+}
+
+.mode-button.active {
+  background: #3a6a9e;
+  color: #fff;
+  border-color: #5a9ad8;
+}
+
+.mode-separator {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: #444;
+  margin: 0 4px;
+  align-self: center;
+}
+
 /* D3 Brush Zoom Overlay */
 .d3-brush .overlay {
-  cursor: crosshair;
+  cursor: inherit;
 }
 
 .d3-brush .selection {

@@ -20,6 +20,7 @@ import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+import { useInteractionMode } from "../lib/interactionMode";
 
 
 const GRID_COLOR = 0x333333;
@@ -86,8 +87,13 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   });
 
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [isShiftHeld, setIsShiftHeld] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  const {
+    interactionMode,
+    setInteractionMode,
+    isPanMode,
+  } = useInteractionMode();
 
   const brushGraphicsRef = useRef(null);
   const brushStartRef = useRef(null);
@@ -365,7 +371,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
    * DRAG & BRUSH EVENTS
    */
   const handleMouseDown = useCallback((event) => {
-    if (isShiftHeld) {
+    if (isPanMode) {
       logChartInteractionEvent({
         interactionType: "PAN",
         visualizationLibrary: "Pixi",
@@ -385,7 +391,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         brushStartRef.current = { x: localX, y: localY };
       }
     }
-  }, [isShiftHeld, innerWidth, innerHeight]);
+  }, [isPanMode, innerWidth, innerHeight]);
 
   const handleMouseMove = useCallback((event) => {
     if (dragRef.current.dragging) {
@@ -488,20 +494,15 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   /*
    * SHIFT KEY HANDLER
    */
+  /* Cancel in-progress brush when switching to pan mode */
   useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === "Shift") setIsShiftHeld(true);
-    };
-    const handleKeyUp = (event) => {
-      if (event.key === "Shift") setIsShiftHeld(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
+    if (isPanMode) {
+      brushStartRef.current = null;
+      if (brushGraphicsRef.current) {
+        brushGraphicsRef.current.clear();
+      }
+    }
+  }, [isPanMode]);
 
   /*
    * DOUBLE CLICK RESET
@@ -625,6 +626,8 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onZoomIn={() => zoom("in")}
         onZoomOut={() => zoom("out")}
         onReset={reset}
+        interactionMode={interactionMode}
+        onModeChange={setInteractionMode}
       />
 
       <div
@@ -636,7 +639,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         onMouseLeave={handleMouseUp}
         onDoubleClick={reset}
         style={{
-          cursor: isShiftHeld
+          cursor: isPanMode
             ? (isDragging ? "grabbing" : "grab")
             : "crosshair",
         }}

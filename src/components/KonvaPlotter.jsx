@@ -13,6 +13,7 @@ import { computeImagePositions } from "../lib/gridLayout";
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+import { useInteractionMode } from "../lib/interactionMode";
 
 
 const AXIS_TICK_COUNT = 8;
@@ -54,8 +55,14 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
   const [brushRect, setBrushRect] = useState(null);
   const draggableGroupRef = useRef(null);
   const stageRef = useRef(null);
-  const isShiftHeldRef = useRef(false);
   const brushStartRef = useRef(null);
+
+  const {
+    interactionMode,
+    setInteractionMode,
+    isZoomMode,
+    isPanMode,
+  } = useInteractionMode();
 
   const innerWidth =
     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
@@ -77,20 +84,13 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
     innerHeight,
   );
 
+  /* Cancel in-progress brush when switching to pan mode */
   useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === "Shift") isShiftHeldRef.current = true;
-    };
-    const handleKeyUp = (event) => {
-      if (event.key === "Shift") isShiftHeldRef.current = false;
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
+    if (isPanMode) {
+      brushStartRef.current = null;
+      setBrushRect(null);
+    }
+  }, [isPanMode]);
 
   const handleWheel = useCallback(
     (event) => {
@@ -178,7 +178,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
 
   const handleBrushStart = useCallback(
     (event) => {
-      if (isShiftHeldRef.current) return;
+      if (!isZoomMode) return;
       const stage = event.target.getStage();
       const pointer = stage.getPointerPosition();
       if (!isPointerInsidePlotArea(pointer, innerWidth, innerHeight)) return;
@@ -188,7 +188,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
       brushStartRef.current = { x: plotX, y: plotY };
       setBrushRect({ x: plotX, y: plotY, width: 0, height: 0 });
     },
-    [innerWidth, innerHeight],
+    [innerWidth, innerHeight, isZoomMode],
   );
 
   const handleBrushMove = useCallback(
@@ -315,12 +315,9 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
     setContentOffset({ x: 0, y: 0 });
   }, []);
 
-  const isBrushing = brushRect !== null;
-  const stageCursor = isBrushing
-    ? "crosshair"
-    : isDragging
-      ? "grabbing"
-      : "crosshair";
+  const stageCursor = isPanMode
+    ? (isDragging ? "grabbing" : "grab")
+    : "crosshair";
 
   return (
     <div style={{ position: "relative" }}>
@@ -329,6 +326,8 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
         onZoomOut={handleZoomOut}
         onReset={handleReset}
         zoomLevel={contentScale}
+        interactionMode={interactionMode}
+        onModeChange={setInteractionMode}
       />
       <Stage
         ref={stageRef}
@@ -363,6 +362,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
             contentOffset={contentOffset}
             contentScale={contentScale}
             draggableGroupRef={draggableGroupRef}
+            isDraggable={isPanMode}
             onDragStart={handleContentDragStart}
             onDragMove={handleContentDragMove}
             onDragEnd={handleContentDragEnd}
@@ -381,17 +381,19 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
           </ClippedContentGroup>
         </Layer>
 
-        {/* Brush overlay layer — captures mouse for box zoom */}
-        <Layer>
-          <BrushSelectionOverlay
-            innerWidth={innerWidth}
-            innerHeight={innerHeight}
-            brushRect={brushRect}
-            onBrushStart={handleBrushStart}
-            onBrushMove={handleBrushMove}
-            onBrushEnd={handleBrushEnd}
-          />
-        </Layer>
+        {/* Brush overlay layer — only rendered in zoom mode */}
+        {isZoomMode && (
+          <Layer>
+            <BrushSelectionOverlay
+              innerWidth={innerWidth}
+              innerHeight={innerHeight}
+              brushRect={brushRect}
+              onBrushStart={handleBrushStart}
+              onBrushMove={handleBrushMove}
+              onBrushEnd={handleBrushEnd}
+            />
+          </Layer>
+        )}
       </Stage>
 
       {hoveredPoint && (
@@ -449,6 +451,7 @@ function ClippedContentGroup({
   contentOffset,
   contentScale,
   draggableGroupRef,
+  isDraggable,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -469,7 +472,7 @@ function ClippedContentGroup({
         y={plotTop + contentOffset.y}
         scaleX={contentScale}
         scaleY={contentScale}
-        draggable
+        draggable={isDraggable}
         onDragStart={onDragStart}
         onDragMove={onDragMove}
         onDragEnd={onDragEnd}
