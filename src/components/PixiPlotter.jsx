@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import { useRef, useEffect, useState, useCallback } from "react";
 
 import {
@@ -13,9 +12,7 @@ import {
 import * as d3 from "d3";
 
 import { usePlotterData } from "../lib/plotterData";
-
 import { computeImagePositions } from "../lib/gridLayout";
-
 import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
 import {
   computeAdaptiveCellSize,
@@ -27,22 +24,162 @@ import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
 
-
 const GRID_COLOR = 0x333333;
 const GRID_ALPHA = 0.45;
-
 const AXIS_BORDER_COLOR = 0x555555;
-
 const TICK_COLOR = "#999999";
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 8;
-
 const ZOOM_STEP = 1.4;
+
+/*
+ * CLAMP PAN
+ */
+function clampPan(xOffset, yOffset, scaleFactor, width, height) {
+  const scaledWidth = width * scaleFactor;
+  const scaledHeight = height * scaleFactor;
+
+  let minOffsetLimitX = width - scaledWidth;
+  let minOffsetLimitY = height - scaledHeight;
+
+  if (scaledWidth < width) {
+    minOffsetLimitX = (width - scaledWidth) / 2;
+  }
+
+  if (scaledHeight < height) {
+    minOffsetLimitY = (height - scaledHeight) / 2;
+  }
+
+  return {
+    x: Math.min(0, Math.max(minOffsetLimitX, xOffset)),
+    y: Math.min(0, Math.max(minOffsetLimitY, yOffset)),
+  };
+}
+
+/*
+ * COMPUTE VIEWPORT SCALES
+ */
+function computeViewportScales(baseScaleX, baseScaleY, scaleFactor, xOffset, yOffset, width, height) {
+  const leftPixel = -xOffset / scaleFactor;
+  const rightPixel = (width - xOffset) / scaleFactor;
+
+  const topPixel = -yOffset / scaleFactor;
+  const bottomPixel = (height - yOffset) / scaleFactor;
+
+  const visibleXMin = baseScaleX.invert(leftPixel);
+  const visibleXMax = baseScaleX.invert(rightPixel);
+
+  const visibleYMax = baseScaleY.invert(topPixel);
+  const visibleYMin = baseScaleY.invert(bottomPixel);
+
+  const dynamicXScale = d3
+    .scaleLinear()
+    .domain([visibleXMin, visibleXMax])
+    .range([0, width]);
+
+  const dynamicYScale = d3
+    .scaleLinear()
+    .domain([visibleYMin, visibleYMax])
+    .range([height, 0]);
+
+  return {
+    dynamicXScale,
+    dynamicYScale,
+  };
+}
+
+/*
+ * INITIALIZE PIXI APP
+ */
+async function initializePixiApp(containerElement, innerWidth, innerHeight) {
+  const app = new PixiApp();
+
+  await app.init({
+    width: PLOT_DIMENSIONS.width,
+    height: PLOT_DIMENSIONS.height,
+    background: 0x16213e,
+    antialias: true,
+  });
+
+  containerElement.appendChild(app.canvas);
+
+  const axesLayer = new Container();
+  axesLayer.x = PLOT_MARGIN.left;
+  axesLayer.y = PLOT_MARGIN.top;
+  app.stage.addChild(axesLayer);
+
+  const contentLayer = new Container();
+  contentLayer.x = PLOT_MARGIN.left;
+  contentLayer.y = PLOT_MARGIN.top;
+  app.stage.addChild(contentLayer);
+
+  const mask = new Graphics();
+  mask.rect(PLOT_MARGIN.left, PLOT_MARGIN.top, innerWidth, innerHeight);
+  mask.fill(0xffffff);
+  app.stage.addChild(mask);
+  contentLayer.mask = mask;
+
+  const brushGraphics = new Graphics();
+  app.stage.addChild(brushGraphics);
+
+  return {
+    app,
+    axesLayer,
+    contentLayer,
+    mask,
+    brushGraphics,
+  };
+}
+
+/*
+ * APPLY BRUSH ZOOM TO TRANSFORM
+ */
+function applyBrushZoom({ startX, startY, width, height }, transformRef, innerWidth, innerHeight) {
+  const currentScale = transformRef.current.scale;
+  const currentX = transformRef.current.x;
+  const currentY = transformRef.current.y;
+
+  const contentX0 = (startX - currentX) / currentScale;
+  const contentY0 = (startY - currentY) / currentScale;
+  const contentWidth = width / currentScale;
+  const contentHeight = height / currentScale;
+
+  const scaleFactorX = innerWidth / contentWidth;
+  const scaleFactorY = innerHeight / contentHeight;
+  const nextScale = Math.max(ZOOM_MIN, Math.min(Math.min(scaleFactorX, scaleFactorY), ZOOM_MAX));
+
+  const offsetCoordinateX = -contentX0 * nextScale;
+  const offsetCoordinateY = -contentY0 * nextScale;
+
+  const clamped = clampPan(offsetCoordinateX, offsetCoordinateY, nextScale, innerWidth, innerHeight);
+  return {
+    scale: nextScale,
+    x: clamped.x,
+    y: clamped.y,
+  };
+}
+
+/*
+ * DRAW BRUSH OVERLAY
+ */
+function drawBrushOverlay(graphics, startX, startY, width, height) {
+  if (!graphics) return;
+  graphics.clear();
+  if (width > 0 && height > 0) {
+    graphics.rect(
+      PLOT_MARGIN.left + startX,
+      PLOT_MARGIN.top + startY,
+      width,
+      height
+    );
+    graphics.fill({ color: 0x4493ff, alpha: 0.15 });
+    graphics.stroke({ width: 1.5, color: 0x4493ff });
+  }
+}
 
 function PixiPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
   const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
-
   const plotterPoints = syntheticPoints || fetchedPoints;
 
   if (!syntheticPoints && isLoading) {
@@ -65,16 +202,13 @@ function PixiPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
 
 function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const containerRef = useRef(null);
-
   const pixiAppRef = useRef(null);
-
   const axesLayerRef = useRef(null);
-
   const contentLayerRef = useRef(null);
-
   const maskRef = useRef(null);
-
   const tooltipRef = useRef(null);
+  const brushGraphicsRef = useRef(null);
+  const brushStartRef = useRef(null);
 
   const baseScalesRef = useRef({
     xScale: null,
@@ -102,62 +236,31 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     isPanMode,
   } = useInteractionMode();
 
-  const brushGraphicsRef = useRef(null);
-  const brushStartRef = useRef(null);
-
-  const innerWidth =
-    PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
-
-  const innerHeight =
-    PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
-
-
+  const innerWidth = PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+  const innerHeight = PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
   /*
    * GET VIEWPORT SCALES
    */
   const getViewportScales = useCallback(() => {
-    const baseXScale = baseScalesRef.current.xScale;
-    const baseYScale = baseScalesRef.current.yScale;
+    const baseScaleX = baseScalesRef.current.xScale;
+    const baseScaleY = baseScalesRef.current.yScale;
 
-    if (!baseXScale || !baseYScale) {
+    if (!baseScaleX || !baseScaleY) {
       return null;
     }
 
     const { scale, x, y } = transformRef.current;
 
-    /*
-     * visible viewport pixels
-     */
-    const leftPx = -x / scale;
-    const rightPx = (innerWidth - x) / scale;
-
-    const topPx = -y / scale;
-    const bottomPx = (innerHeight - y) / scale;
-
-    /*
-     * convert visible pixels -> domain
-     */
-    const visibleXMin = baseXScale.invert(leftPx);
-    const visibleXMax = baseXScale.invert(rightPx);
-
-    const visibleYMax = baseYScale.invert(topPx);
-    const visibleYMin = baseYScale.invert(bottomPx);
-
-    const dynamicXScale = d3
-      .scaleLinear()
-      .domain([visibleXMin, visibleXMax])
-      .range([0, innerWidth]);
-
-    const dynamicYScale = d3
-      .scaleLinear()
-      .domain([visibleYMin, visibleYMax])
-      .range([innerHeight, 0]);
-
-    return {
-      dynamicXScale,
-      dynamicYScale,
-    };
+    return computeViewportScales(
+      baseScaleX,
+      baseScaleY,
+      scale,
+      x,
+      y,
+      innerWidth,
+      innerHeight
+    );
   }, [innerWidth, innerHeight]);
 
   /*
@@ -167,11 +270,9 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     if (!axesLayerRef.current) return;
 
     const viewportScales = getViewportScales();
-
     if (!viewportScales) return;
 
     const axesLayer = axesLayerRef.current;
-
     axesLayer.removeChildren();
 
     drawGrid(
@@ -179,7 +280,7 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       viewportScales.dynamicXScale,
       viewportScales.dynamicYScale,
       innerWidth,
-      innerHeight,
+      innerHeight
     );
 
     drawAxesLabels(
@@ -187,97 +288,9 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       viewportScales.dynamicXScale,
       viewportScales.dynamicYScale,
       innerWidth,
-      innerHeight,
+      innerHeight
     );
   }, [getViewportScales, innerWidth, innerHeight]);
-
-  /*
-   * MAIN RENDER
-   */
-  const renderScene = async () => {
-    if (!axesLayerRef.current) return;
-
-    if (!contentLayerRef.current) return;
-
-    const contentLayer = contentLayerRef.current;
-
-    contentLayer.removeChildren();
-
-    const scaledPoints = plotterPoints.map((point) => ({
-      ...point,
-      scaledX: point.x * (xGap / 10),
-      scaledY: point.y * (yGap / 10),
-    }));
-
-    const xExtent = d3.extent(scaledPoints, (d) => d.scaledX);
-
-    const yExtent = d3.extent(scaledPoints, (d) => d.scaledY);
-
-    /*
-     * BASE SCALES
-     */
-    const baseXScale = d3
-      .scaleLinear()
-      .domain([xExtent[0] - 5, xExtent[1] + 5])
-      .range([0, innerWidth]);
-
-    const baseYScale = d3
-      .scaleLinear()
-      .domain([yExtent[0] - 5, yExtent[1] + 5])
-      .range([innerHeight, 0]);
-
-    baseScalesRef.current = {
-      xScale: baseXScale,
-      yScale: baseYScale,
-    };
-
-    /*
-     * RENDER DYNAMIC AXES
-     */
-    renderAxes();
-
-    /*
-     * LOAD IMAGES
-     */
-    const uniqueImages = [...new Set(plotterPoints.map((p) => p.image))];
-
-    await Assets.load(uniqueImages);
-
-    /*
-     * DRAW POINTS WITH ADAPTIVE SIZING
-     */
-    const adaptiveCellSize = computeAdaptiveCellSize(
-      scaledPoints,
-      (val) => baseXScale(val),
-      (val) => baseYScale(val),
-    );
-
-    const visibleScaledPoints = filterVisiblePoints(
-      scaledPoints,
-      (val) => baseXScale(val),
-      (val) => baseYScale(val),
-      innerWidth,
-      innerHeight,
-      adaptiveCellSize,
-    );
-
-    const effectiveImageCount = computeEffectiveImageCount(
-      adaptiveCellSize,
-      imageCount,
-    );
-
-    drawPoints(
-      contentLayer,
-      visibleScaledPoints,
-      baseXScale,
-      baseYScale,
-      effectiveImageCount,
-      tooltipRef,
-      adaptiveCellSize,
-    );
-
-    applyTransform();
-  };
 
   /*
    * APPLY TRANSFORM
@@ -286,47 +299,79 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     if (!contentLayerRef.current) return;
 
     const contentLayer = contentLayerRef.current;
-
     contentLayer.scale.set(transformRef.current.scale);
-
     contentLayer.x = PLOT_MARGIN.left + transformRef.current.x;
-
     contentLayer.y = PLOT_MARGIN.top + transformRef.current.y;
 
-    /*
-     * rerender viewport axes
-     */
     renderAxes();
   }, [renderAxes]);
 
   /*
-   * CLAMP PAN
+   * MAIN RENDER
    */
-  const clampPan = (x, y, scale) => {
-    const scaledWidth = innerWidth * scale;
-    const scaledHeight = innerHeight * scale;
+  const renderScene = useCallback(async () => {
+    if (!axesLayerRef.current || !contentLayerRef.current) return;
 
-    let minX = innerWidth - scaledWidth;
-    let minY = innerHeight - scaledHeight;
+    const contentLayer = contentLayerRef.current;
+    contentLayer.removeChildren();
 
-    if (scaledWidth < innerWidth) {
-      minX = (innerWidth - scaledWidth) / 2;
-    }
+    const scaledPoints = plotterPoints.map((point) => ({
+      ...point,
+      scaledX: point.x * (xGap / 10),
+      scaledY: point.y * (yGap / 10),
+    }));
 
-    if (scaledHeight < innerHeight) {
-      minY = (innerHeight - scaledHeight) / 2;
-    }
+    const xDomainExtent = d3.extent(scaledPoints, (point) => point.scaledX);
+    const yDomainExtent = d3.extent(scaledPoints, (point) => point.scaledY);
 
-    return {
-      x: Math.min(0, Math.max(minX, x)),
-      y: Math.min(0, Math.max(minY, y)),
-    };
-  };
+    const baseScaleX = d3.scaleLinear()
+      .domain([xDomainExtent[0] - 5, xDomainExtent[1] + 5])
+      .range([0, innerWidth]);
+
+    const baseScaleY = d3.scaleLinear()
+      .domain([yDomainExtent[0] - 5, yDomainExtent[1] + 5])
+      .range([innerHeight, 0]);
+
+    baseScalesRef.current = { xScale: baseScaleX, yScale: baseScaleY };
+    renderAxes();
+
+    const uniqueImageUrls = [...new Set(plotterPoints.map((point) => point.image))];
+    await Assets.load(uniqueImageUrls);
+
+    const adaptiveCellSize = computeAdaptiveCellSize(
+      scaledPoints,
+      (val) => baseScaleX(val),
+      (val) => baseScaleY(val)
+    );
+
+    const visibleCoordinatesPoints = filterVisiblePoints(
+      scaledPoints,
+      (val) => baseScaleX(val),
+      (val) => baseScaleY(val),
+      innerWidth,
+      innerHeight,
+      adaptiveCellSize
+    );
+
+    const effectiveImageCount = computeEffectiveImageCount(adaptiveCellSize, imageCount);
+
+    drawPoints(
+      contentLayer,
+      visibleCoordinatesPoints,
+      baseScaleX,
+      baseScaleY,
+      effectiveImageCount,
+      tooltipRef,
+      adaptiveCellSize
+    );
+
+    applyTransform();
+  }, [plotterPoints, xGap, yGap, innerWidth, innerHeight, renderAxes, imageCount, applyTransform]);
 
   /*
    * ZOOM
    */
-  const zoom = (direction, interactionSource = "button") => {
+  const zoom = useCallback((direction, interactionSource = "button") => {
     logChartInteractionEvent({
       interactionType: direction === "in" ? "ZOOM_IN" : "ZOOM_OUT",
       visualizationLibrary: "Pixi",
@@ -339,38 +384,48 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         ? Math.min(currentScale * ZOOM_STEP, ZOOM_MAX)
         : Math.max(currentScale / ZOOM_STEP, ZOOM_MIN);
 
-    const centerX = innerWidth / 2;
-    const centerY = innerHeight / 2;
+    const plotCenterX = innerWidth / 2;
+    const plotCenterY = innerHeight / 2;
 
-    let nextX =
-      transformRef.current.x - centerX * (nextScale / currentScale - 1);
+    const nextTransformOffsetX =
+      transformRef.current.x - plotCenterX * (nextScale / currentScale - 1);
 
-    let nextY =
-      transformRef.current.y - centerY * (nextScale / currentScale - 1);
+    const nextTransformOffsetY =
+      transformRef.current.y - plotCenterY * (nextScale / currentScale - 1);
 
-    const clamped = clampPan(nextX, nextY, nextScale);
+    const clampedTransformOffset = clampPan(
+      nextTransformOffsetX,
+      nextTransformOffsetY,
+      nextScale,
+      innerWidth,
+      innerHeight
+    );
 
     transformRef.current = {
       scale: nextScale,
-      x: clamped.x,
-      y: clamped.y,
+      x: clampedTransformOffset.x,
+      y: clampedTransformOffset.y,
     };
 
     setZoomLevel(nextScale);
-
     applyTransform();
-  };
+  }, [innerWidth, innerHeight, applyTransform]);
 
   /*
    * RESET
    */
   const reset = useCallback((interactionSource) => {
-    const computedSource = (interactionSource && typeof interactionSource === "string") ? interactionSource : "button";
+    const computedSource =
+      interactionSource && typeof interactionSource === "string"
+        ? interactionSource
+        : "button";
+
     logChartInteractionEvent({
       interactionType: "RESET",
       visualizationLibrary: "Pixi",
       interactionSource: computedSource,
     });
+
     transformRef.current = {
       scale: 1,
       x: 0,
@@ -378,27 +433,13 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     };
 
     setZoomLevel(1);
-
     applyTransform();
   }, [applyTransform]);
 
   /*
-   * WHEEL ZOOM
+   * CANVAS INTERACTIONS
    */
-  const handleWheel = useCallback((event) => {
-    event.preventDefault();
-
-    if (event.deltaY > 0) {
-      zoom("out", "wheel");
-    } else {
-      zoom("in", "wheel");
-    }
-  }, [zoom]);
-
-  /*
-   * DRAG & BRUSH EVENTS
-   */
-  const handleMouseDown = useCallback((event) => {
+  const onCanvasMouseDown = useCallback((event) => {
     if (isPanMode) {
       logChartInteractionEvent({
         interactionType: "PAN",
@@ -421,11 +462,11 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     }
   }, [isPanMode, innerWidth, innerHeight]);
 
-  const handleMouseMove = useCallback((event) => {
+  const onCanvasMouseMove = useCallback((event) => {
     if (dragRef.current.dragging) {
       const nextX = event.clientX - dragRef.current.startX;
       const nextY = event.clientY - dragRef.current.startY;
-      const clamped = clampPan(nextX, nextY, transformRef.current.scale);
+      const clamped = clampPan(nextX, nextY, transformRef.current.scale, innerWidth, innerHeight);
 
       transformRef.current.x = clamped.x;
       transformRef.current.y = clamped.y;
@@ -440,29 +481,16 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       const localX = Math.max(0, Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left));
       const localY = Math.max(0, Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top));
 
-      const x0 = Math.min(brushStartRef.current.x, localX);
-      const y0 = Math.min(brushStartRef.current.y, localY);
-      const w = Math.abs(localX - brushStartRef.current.x);
-      const h = Math.abs(localY - brushStartRef.current.y);
+      const brushStartX = Math.min(brushStartRef.current.x, localX);
+      const brushStartY = Math.min(brushStartRef.current.y, localY);
+      const brushWidth = Math.abs(localX - brushStartRef.current.x);
+      const brushHeight = Math.abs(localY - brushStartRef.current.y);
 
-      const brushGraphics = brushGraphicsRef.current;
-      if (brushGraphics) {
-        brushGraphics.clear();
-        if (w > 0 && h > 0) {
-          brushGraphics.rect(
-            PLOT_MARGIN.left + x0,
-            PLOT_MARGIN.top + y0,
-            w,
-            h
-          );
-          brushGraphics.fill({ color: 0x4493ff, alpha: 0.15 });
-          brushGraphics.stroke({ width: 1.5, color: 0x4493ff });
-        }
-      }
+      drawBrushOverlay(brushGraphicsRef.current, brushStartX, brushStartY, brushWidth, brushHeight);
     }
-  }, [innerWidth, innerHeight]);
+  }, [innerWidth, innerHeight, applyTransform]);
 
-  const handleMouseUp = useCallback((event) => {
+  const onCanvasMouseUp = useCallback((event) => {
     setIsDragging(false);
     if (dragRef.current.dragging) {
       dragRef.current.dragging = false;
@@ -475,40 +503,32 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       const localX = Math.max(0, Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left));
       const localY = Math.max(0, Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top));
 
-      const x0 = Math.min(brushStartRef.current.x, localX);
-      const y0 = Math.min(brushStartRef.current.y, localY);
-      const w = Math.abs(localX - brushStartRef.current.x);
-      const h = Math.abs(localY - brushStartRef.current.y);
+      const brushStartX = Math.min(brushStartRef.current.x, localX);
+      const brushStartY = Math.min(brushStartRef.current.y, localY);
+      const brushWidth = Math.abs(localX - brushStartRef.current.x);
+      const brushHeight = Math.abs(localY - brushStartRef.current.y);
 
-      if (w >= 5 && h >= 5) {
+      if (brushWidth >= 5 && brushHeight >= 5) {
         logChartInteractionEvent({
           interactionType: "ZOOM_IN",
           visualizationLibrary: "Pixi",
           interactionSource: "brush",
         });
-        const currentScale = transformRef.current.scale;
-        const currentX = transformRef.current.x;
-        const currentY = transformRef.current.y;
 
-        const contentX0 = (x0 - currentX) / currentScale;
-        const contentY0 = (y0 - currentY) / currentScale;
-        const contentW = w / currentScale;
-        const contentH = h / currentScale;
+        const nextTransform = applyBrushZoom(
+          { startX: brushStartX, startY: brushStartY, width: brushWidth, height: brushHeight },
+          transformRef,
+          innerWidth,
+          innerHeight
+        );
 
-        const scaleX = innerWidth / contentW;
-        const scaleY = innerHeight / contentH;
-        const nextScale = Math.max(ZOOM_MIN, Math.min(Math.min(scaleX, scaleY), ZOOM_MAX));
-
-        const rawX = -contentX0 * nextScale;
-        const rawY = -contentY0 * nextScale;
-
-        const clamped = clampPan(rawX, rawY, nextScale);
         transformRef.current = {
-          scale: nextScale,
-          x: clamped.x,
-          y: clamped.y,
+          scale: nextTransform.scale,
+          x: nextTransform.x,
+          y: nextTransform.y,
         };
-        setZoomLevel(nextScale);
+
+        setZoomLevel(nextTransform.scale);
         applyTransform();
       }
 
@@ -517,11 +537,8 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       }
       brushStartRef.current = null;
     }
-  }, [innerWidth, innerHeight]);
+  }, [innerWidth, innerHeight, applyTransform]);
 
-  /*
-   * SHIFT KEY HANDLER
-   */
   /* Cancel in-progress brush when switching to pan mode */
   useEffect(() => {
     if (isPanMode) {
@@ -533,119 +550,80 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   }, [isPanMode]);
 
   /*
-   * DOUBLE CLICK RESET
-   */
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleDblClick = () => {
-      reset("double_click");
-    };
-
-    container.addEventListener("dblclick", handleDblClick);
-    return () => {
-      container.removeEventListener("dblclick", handleDblClick);
-    };
-  }, [reset]);
-
-  /*
    * INITIALIZE PIXI
    */
   useEffect(() => {
-    let cancelled = false;
+    let isComponentUnmounted = false;
+    let pixiApplicationInstance = null;
 
-    async function init() {
-      if (!containerRef.current) return;
+    if (!containerRef.current) return;
 
-      const app = new PixiApp();
+    initializePixiApp(containerRef.current, innerWidth, innerHeight)
+      .then(({ app, axesLayer, contentLayer, mask, brushGraphics }) => {
+        if (isComponentUnmounted) {
+          try {
+            app.destroy({ removeView: true });
+          } catch (err) {
+            console.error("Error destroying Pixi App during init cancellation:", err);
+          }
+          return;
+        }
 
-      await app.init({
-        width: PLOT_DIMENSIONS.width,
-        height: PLOT_DIMENSIONS.height,
-        background: 0x16213e,
-        antialias: true,
-      });
+        pixiAppRef.current = app;
+        axesLayerRef.current = axesLayer;
+        contentLayerRef.current = contentLayer;
+        maskRef.current = mask;
+        brushGraphicsRef.current = brushGraphics;
+        pixiApplicationInstance = app;
 
-      if (cancelled) {
-        app.destroy(true);
-        return;
-      }
-
-      containerRef.current.appendChild(app.canvas);
-
-      pixiAppRef.current = app;
-
-      /*
-       * AXES LAYER
-       */
-      const axesLayer = new Container();
-
-      axesLayer.x = PLOT_MARGIN.left;
-      axesLayer.y = PLOT_MARGIN.top;
-
-      app.stage.addChild(axesLayer);
-
-      axesLayerRef.current = axesLayer;
-
-      /*
-       * CONTENT LAYER
-       */
-      const contentLayer = new Container();
-
-      contentLayer.x = PLOT_MARGIN.left;
-      contentLayer.y = PLOT_MARGIN.top;
-
-      app.stage.addChild(contentLayer);
-
-      contentLayerRef.current = contentLayer;
-
-      /*
-       * MASK / CLIPPING
-       */
-      const mask = new Graphics();
-
-      mask.rect(PLOT_MARGIN.left, PLOT_MARGIN.top, innerWidth, innerHeight);
-
-      mask.fill(0xffffff);
-
-      app.stage.addChild(mask);
-
-      contentLayer.mask = mask;
-
-      maskRef.current = mask;
-
-      /*
-       * BRUSH LAYER / GRAPHICS
-       */
-      const brushGraphics = new Graphics();
-      app.stage.addChild(brushGraphics);
-      brushGraphicsRef.current = brushGraphics;
-
-      requestAnimationFrame(() => {
         renderScene();
+      })
+      .catch((err) => {
+        console.error("Failed to initialize Pixi:", err);
       });
-    }
-
-    init();
 
     return () => {
-      cancelled = true;
-
-      if (pixiAppRef.current) {
-        pixiAppRef.current.destroy(true);
+      isComponentUnmounted = true;
+      if (pixiApplicationInstance) {
+        try {
+          pixiApplicationInstance.destroy({ removeView: true });
+        } catch (err) {
+          console.error("Error destroying Pixi App:", err);
+        }
       }
     };
-  }, [renderScene, innerWidth, innerHeight]);
+  }, [innerWidth, innerHeight, renderScene]);
 
   /*
    * RERENDER DATA CHANGES
    */
   useEffect(() => {
     if (!plotterPoints.length) return;
-
     renderScene();
   }, [plotterPoints, imageCount, xGap, yGap, renderScene]);
+
+  /*
+   * ATTACH NON-PASSIVE WHEEL LISTENER
+   */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onCanvasWheelScroll = (event) => {
+      event.preventDefault();
+      if (event.deltaY > 0) {
+        zoom("out", "wheel");
+      } else {
+        zoom("in", "wheel");
+      }
+    };
+
+    container.addEventListener("wheel", onCanvasWheelScroll, { passive: false });
+
+    return () => {
+      container.removeEventListener("wheel", onCanvasWheelScroll);
+    };
+  }, [zoom]);
 
   return (
     <div style={{ position: "relative" }}>
@@ -653,19 +631,18 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         zoomLevel={zoomLevel}
         onZoomIn={() => zoom("in")}
         onZoomOut={() => zoom("out")}
-        onReset={reset}
+        onReset={() => reset("button")}
         interactionMode={interactionMode}
         onModeChange={setInteractionMode}
       />
 
       <div
         ref={containerRef}
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onDoubleClick={reset}
+        onMouseDown={onCanvasMouseDown}
+        onMouseMove={onCanvasMouseMove}
+        onMouseUp={onCanvasMouseUp}
+        onMouseLeave={onCanvasMouseUp}
+        onDoubleClick={() => reset("double_click")}
         style={{
           cursor: isPanMode
             ? (isDragging ? "grabbing" : "grab")
@@ -689,23 +666,20 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 /*
  * GRID
  */
-function drawGrid(layer, xScale, yScale, width, height) {
+function drawGrid(layer, scaleX, scaleY, width, height) {
   const grid = new Graphics();
 
-  const xTicks = buildIntegerTicks(xScale.domain());
-
-  const yTicks = buildIntegerTicks(yScale.domain());
+  const xTicks = buildIntegerTicks(scaleX.domain());
+  const yTicks = buildIntegerTicks(scaleY.domain());
 
   xTicks.forEach((tick) => {
-    const x = xScale(tick);
-
+    const x = scaleX(tick);
     grid.moveTo(x, 0);
     grid.lineTo(x, height);
   });
 
   yTicks.forEach((tick) => {
-    const y = yScale(tick);
-
+    const y = scaleY(tick);
     grid.moveTo(0, y);
     grid.lineTo(width, y);
   });
@@ -717,26 +691,22 @@ function drawGrid(layer, xScale, yScale, width, height) {
   });
 
   const border = new Graphics();
-
   border.rect(0, 0, width, height);
-
   border.stroke({
     width: 1,
     color: AXIS_BORDER_COLOR,
   });
 
   layer.addChild(grid);
-
   layer.addChild(border);
 }
 
 /*
  * LABELS
  */
-function drawAxesLabels(layer, xScale, yScale, innerWidth, innerHeight) {
-  const xTicks = buildIntegerTicks(xScale.domain());
-
-  const yTicks = buildIntegerTicks(yScale.domain());
+function drawAxesLabels(layer, scaleX, scaleY, innerWidth, innerHeight) {
+  const xTicks = buildIntegerTicks(scaleX.domain());
+  const yTicks = buildIntegerTicks(scaleY.domain());
 
   xTicks.forEach((tick) => {
     const label = new PixiText({
@@ -747,10 +717,8 @@ function drawAxesLabels(layer, xScale, yScale, innerWidth, innerHeight) {
       },
     });
 
-    label.x = xScale(tick) - label.width / 2;
-
+    label.x = scaleX(tick) - label.width / 2;
     label.y = innerHeight + 6;
-
     layer.addChild(label);
   });
 
@@ -764,9 +732,7 @@ function drawAxesLabels(layer, xScale, yScale, innerWidth, innerHeight) {
     });
 
     label.x = -label.width - 6;
-
-    label.y = yScale(tick) - label.height / 2;
-
+    label.y = scaleY(tick) - label.height / 2;
     layer.addChild(label);
   });
 }
@@ -774,33 +740,26 @@ function drawAxesLabels(layer, xScale, yScale, innerWidth, innerHeight) {
 /*
  * POINTS
  */
-function drawPoints(layer, points, xScale, yScale, imageCount, tooltipRef, cellSize = CELL_SIZE) {
+function drawPoints(layer, points, scaleX, scaleY, imageCount, tooltipRef, cellSize = CELL_SIZE) {
   points.forEach((point) => {
-    const x = xScale(point.scaledX);
-
-    const y = yScale(point.scaledY);
+    const x = scaleX(point.scaledX);
+    const y = scaleY(point.scaledY);
 
     const positions = computeImagePositions(
       x,
       y,
       cellSize,
       cellSize,
-      imageCount,
+      imageCount
     );
 
     positions.forEach((position) => {
       const sprite = Sprite.from(point.image);
-
       sprite.x = position.x;
-
       sprite.y = position.y;
-
       sprite.width = position.width;
-
       sprite.height = position.height;
-
       sprite.eventMode = "static";
-
       sprite.cursor = "pointer";
 
       sprite.on("pointerenter", (event) => {
@@ -821,7 +780,6 @@ function drawPoints(layer, points, xScale, yScale, imageCount, tooltipRef, cellS
  */
 function buildIntegerTicks([min, max]) {
   const range = max - min;
-
   let step;
 
   if (range <= 10) step = 1;
@@ -832,7 +790,6 @@ function buildIntegerTicks([min, max]) {
   else step = 50;
 
   const ticks = [];
-
   const start = Math.floor(min / step) * step;
 
   for (let value = start; value <= max; value += step) {
@@ -849,11 +806,8 @@ function showTooltip(element, event, point) {
   if (!element) return;
 
   const global = event.global;
-
   element.style.display = "block";
-
   element.style.left = `${global.x + 15}px`;
-
   element.style.top = `${global.y - 10}px`;
 
   element.innerHTML = `
@@ -871,7 +825,6 @@ function showTooltip(element, event, point) {
 
 function hideTooltip(element) {
   if (!element) return;
-
   element.style.display = "none";
 }
 
