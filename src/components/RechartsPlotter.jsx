@@ -16,7 +16,7 @@ import { useInteractionMode } from "../lib/interactionMode";
 
 const ZOOM_STEP = 1.5;
 const ZOOM_MIN = 0.35;
-const ZOOM_MAX = 14;
+const ZOOM_MAX = 100000;
 const BRUSH_MIN_PIXELS = 5;
 const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
 const BRUSH_STROKE = "#4493ff";
@@ -173,10 +173,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     [],
   );
 
-  const adaptiveCellSizeForRender = useMemo(() => {
-    /* Compute from base scales (content-space) so the cell size is set at
-       the default zoom level. The SVG transform then naturally magnifies
-       images when zoomed in, revealing more detail. */
+  /* Base cell size from unzoomed domain; multiply by transform.scale so images
+     grow with zoom — matching D3's zoomFactor * baseCellSize approach. */
+  const adaptiveCellSizeBase = useMemo(() => {
     return computeAdaptiveCellSize(
       normalizedPoints,
       (val) => baseXScale(val),
@@ -184,8 +183,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     );
   }, [normalizedPoints, baseXScale, baseYScale]);
 
+  const adaptiveCellSizeForRender = adaptiveCellSizeBase * transform.scale;
+
   const visiblePointsForRender = useMemo(() => {
-    /* Viewport culling still needs screen-space coordinates. */
     const xScreenFn = (val) => baseXScale(val) * transform.scale + transform.x;
     const yScreenFn = (val) => baseYScale(val) * transform.scale + transform.y;
     return filterVisiblePoints(
@@ -194,13 +194,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       yScreenFn,
       innerWidth,
       innerHeight,
-      adaptiveCellSizeForRender * transform.scale,
+      adaptiveCellSizeBase * transform.scale,
     );
-  }, [normalizedPoints, baseXScale, baseYScale, transform, innerWidth, innerHeight, adaptiveCellSizeForRender]);
+  }, [normalizedPoints, baseXScale, baseYScale, transform, innerWidth, innerHeight, adaptiveCellSizeBase]);
 
   const effectiveImageCountForRender = useMemo(
-    () => computeEffectiveImageCount(adaptiveCellSizeForRender * transform.scale, imageCount),
-    [adaptiveCellSizeForRender, transform.scale, imageCount],
+    () => computeEffectiveImageCount(adaptiveCellSizeBase * transform.scale, imageCount),
+    [adaptiveCellSizeBase, transform.scale, imageCount],
   );
 
   const zoomTo = useCallback(
@@ -533,13 +533,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
           />
 
           <g clipPath={`url(#${clipId})`}>
-            <g transform={contentTransform}>
+            <g>
               {visiblePointsForRender.map((point) => (
                 <ImagePoint
                   key={point.id}
                   point={point}
-                  baseXScale={baseXScale}
-                  baseYScale={baseYScale}
+                  xScale={xTickScale}
+                  yScale={yTickScale}
                   imageCount={effectiveImageCountForRender}
                   adaptiveCellSize={adaptiveCellSizeForRender}
                 />
@@ -598,9 +598,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   );
 }
 
-function ImagePoint({ point, baseXScale, baseYScale, imageCount, adaptiveCellSize }) {
-  const centerX = baseXScale(point.scaledX);
-  const centerY = baseYScale(point.scaledY);
+function ImagePoint({ point, xScale, yScale, imageCount, adaptiveCellSize }) {
+  const centerX = xScale(point.scaledX);
+  const centerY = yScale(point.scaledY);
   const cellSize = adaptiveCellSize ?? CELL_SIZE;
 
   const positions = computeImagePositions(

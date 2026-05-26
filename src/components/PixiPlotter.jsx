@@ -29,9 +29,9 @@ const GRID_ALPHA = 0.45;
 const AXIS_BORDER_COLOR = 0x555555;
 const TICK_COLOR = "#999999";
 
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 8;
-const ZOOM_STEP = 1.4;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 100000;
+const ZOOM_STEP = 1.5;
 
 /*
  * CLAMP PAN
@@ -293,27 +293,74 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   }, [getViewportScales, innerWidth, innerHeight]);
 
   /*
-   * APPLY TRANSFORM
+   * APPLY TRANSFORM — redraws points from current viewport scales (deep zoom).
+   * Content layer is always identity; no matrix upscaling of sprites.
    */
   const applyTransform = useCallback(() => {
     if (!contentLayerRef.current) return;
 
-    const contentLayer = contentLayerRef.current;
-    contentLayer.scale.set(transformRef.current.scale);
-    contentLayer.x = PLOT_MARGIN.left + transformRef.current.x;
-    contentLayer.y = PLOT_MARGIN.top + transformRef.current.y;
+    const viewportScales = getViewportScales();
+    if (!viewportScales) return;
 
-    renderAxes();
-  }, [renderAxes]);
-
-  /*
-   * MAIN RENDER
-   */
-  const renderScene = useCallback(async () => {
-    if (!axesLayerRef.current || !contentLayerRef.current) return;
+    const { dynamicXScale, dynamicYScale } = viewportScales;
+    const { scale } = transformRef.current;
 
     const contentLayer = contentLayerRef.current;
     contentLayer.removeChildren();
+    contentLayer.scale.set(1);
+    contentLayer.x = PLOT_MARGIN.left;
+    contentLayer.y = PLOT_MARGIN.top;
+
+    const baseScaleX = baseScalesRef.current.xScale;
+    const baseScaleY = baseScalesRef.current.yScale;
+    if (!baseScaleX || !baseScaleY) return;
+
+    const scaledPoints = plotterPoints.map((point) => ({
+      ...point,
+      scaledX: point.x * (xGap / 10),
+      scaledY: point.y * (yGap / 10),
+    }));
+
+    /* Same pattern as Recharts: base cell size × current zoom scale. */
+    const adaptiveCellSizeBase = computeAdaptiveCellSize(
+      scaledPoints,
+      (val) => baseScaleX(val),
+      (val) => baseScaleY(val),
+    );
+    const currentCellSize = adaptiveCellSizeBase * scale;
+
+    /* Screen-space culling. */
+    const xScreenFn = (val) => baseScaleX(val) * scale + transformRef.current.x;
+    const yScreenFn = (val) => baseScaleY(val) * scale + transformRef.current.y;
+    const visiblePoints = filterVisiblePoints(
+      scaledPoints,
+      xScreenFn,
+      yScreenFn,
+      innerWidth,
+      innerHeight,
+      currentCellSize,
+    );
+
+    const effectiveImageCount = computeEffectiveImageCount(currentCellSize, imageCount);
+
+    drawPoints(
+      contentLayer,
+      visiblePoints,
+      dynamicXScale,
+      dynamicYScale,
+      effectiveImageCount,
+      tooltipRef,
+      currentCellSize,
+    );
+
+    renderAxes();
+  }, [getViewportScales, renderAxes, plotterPoints, xGap, yGap, innerWidth, innerHeight, imageCount]);
+
+  /*
+   * MAIN RENDER — loads assets then delegates to applyTransform for drawing.
+   */
+  const renderScene = useCallback(async () => {
+    if (!axesLayerRef.current || !contentLayerRef.current) return;
 
     const scaledPoints = plotterPoints.map((point) => ({
       ...point,
@@ -338,35 +385,10 @@ function PixiCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     const uniqueImageUrls = [...new Set(plotterPoints.map((point) => point.image))];
     await Assets.load(uniqueImageUrls);
 
-    const adaptiveCellSize = computeAdaptiveCellSize(
-      scaledPoints,
-      (val) => baseScaleX(val),
-      (val) => baseScaleY(val)
-    );
-
-    const visibleCoordinatesPoints = filterVisiblePoints(
-      scaledPoints,
-      (val) => baseScaleX(val),
-      (val) => baseScaleY(val),
-      innerWidth,
-      innerHeight,
-      adaptiveCellSize
-    );
-
-    const effectiveImageCount = computeEffectiveImageCount(adaptiveCellSize, imageCount);
-
-    drawPoints(
-      contentLayer,
-      visibleCoordinatesPoints,
-      baseScaleX,
-      baseScaleY,
-      effectiveImageCount,
-      tooltipRef,
-      adaptiveCellSize
-    );
-
     applyTransform();
-  }, [plotterPoints, xGap, yGap, innerWidth, innerHeight, renderAxes, imageCount, applyTransform]);
+  }, [plotterPoints, xGap, yGap, innerWidth, innerHeight, renderAxes, applyTransform]);
+
+
 
   /*
    * ZOOM
@@ -814,7 +836,7 @@ function showTooltip(element, event, point) {
     <div class="tooltip-label">
       ${point.label}
     </div>
-
+ 
     <div class="tooltip-meta">
       <span>Interval: ${point.meta.interval}s</span>
       <span>Angle: ${point.meta.angle}°</span>

@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 
 const MIN_DATA_POINTS = 1;
-const MAX_DATA_POINTS = 2000;
+const MAX_DATA_POINTS = 10000;
 const SLIDER_STEP = 1;
 
 function DataPointCountControl({ dataPointCount, onDataPointCountChange }) {

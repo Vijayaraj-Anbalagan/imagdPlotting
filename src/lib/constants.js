@@ -13,7 +13,7 @@ export const IMAGE_COUNTS = [1, 2, 4, 8];
 
 export const DATA_POINT_LIMITS = {
   min: 1,
-  max: 2000,
+  max: 10000,
   defaultCount: 16,
 };
 

@@ -7,8 +7,8 @@
  */
 export function computeGridOffsets(cellWidth, cellHeight, imageCount) {
   const gridConfig = getGridConfig(imageCount);
-  const subWidth = cellWidth;
-  const subHeight = cellHeight;
+  const subWidth = cellWidth / gridConfig.columns;
+  const subHeight = cellHeight / gridConfig.rows;
   const offsets = [];
 
   for (let row = 0; row < gridConfig.rows; row++) {
