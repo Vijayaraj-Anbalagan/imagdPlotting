@@ -9,21 +9,27 @@ export const LIBRARIES = [
 
 export const DISABLED_LIBRARIES = ["DeckGL", "ECharts"];
 
-export const IMAGE_COUNTS = [1, 2, 4, 8];
+/**
+ * Dynamic image count support.
+ * We no longer restrict to [1,2,4,8].
+ */
+export const MIN_IMAGES_PER_POINT = 1;
+export const MAX_IMAGES_PER_POINT = 8;
 
 export const DATA_POINT_LIMITS = {
   min: 1,
-  max: 10000,
+  max: 1000,
   defaultCount: 16,
 };
 
 export const CELL_SIZE = 50;
+export const IMAGE_PADDING = 0.9;
 
 export const ADAPTIVE_CELL_SIZE = {
   max: 50,
   min: 4,
-  gapRatio: 0.78,
-  collapseThreshold: 18,
+  gapRatio: 0.55,
+  collapseThreshold: 0,
 };
 
 export const PLOT_DIMENSIONS = {
@@ -50,3 +56,9 @@ export const BRUSH_ZOOM = {
 export const ZOOM_SCALE_FACTOR = 1.5;
 
 export const WHEEL_ZOOM_SENSITIVITY = 0.002;
+
+/**
+ * Prevent browser crashes.
+ * 1000 x 1000 = 1,000,000 rendered images.
+ */
+export const MAX_RENDER_IMAGES = 50000;

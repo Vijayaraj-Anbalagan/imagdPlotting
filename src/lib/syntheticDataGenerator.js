@@ -1,4 +1,4 @@
-const BASE_IMAGE_PATH = "/images/base.jpeg";
+const BASE_IMAGE_PATH = "/images/base.jpg";
 
 /**
  * Generates an array of synthetic plotter data points arranged in a grid.

@@ -16,7 +16,11 @@ export function computeAdaptiveCellSize(plotterPoints, xScaleFn, yScaleFn) {
     return ADAPTIVE_CELL_SIZE.max;
   }
 
-  const pixelPositions = projectPointsToPixels(plotterPoints, xScaleFn, yScaleFn);
+  const pixelPositions = projectPointsToPixels(
+    plotterPoints,
+    xScaleFn,
+    yScaleFn,
+  );
   const medianDistance = estimateMedianNeighborDistance(pixelPositions);
 
   if (medianDistance <= 0) {
@@ -70,23 +74,17 @@ export function filterVisiblePoints(
 }
 
 /**
- * Determines whether multi-image grids should collapse to a single
- * representative thumbnail based on adaptive cell size.
- *
- * @param {number} adaptiveCellSize - Current adaptive cell size in px
- * @param {number} imageCount       - Requested sub-images per point
- * @returns {number} Effective image count (1 if collapsed)
+ * Always preserve requested image count.
+ * We scale image sizes instead of collapsing image count.
  */
 export function computeEffectiveImageCount(adaptiveCellSize, imageCount) {
-  if (imageCount <= 1) {
+  const parsed = Number(imageCount);
+
+  if (Number.isNaN(parsed)) {
     return 1;
   }
 
-  if (adaptiveCellSize < ADAPTIVE_CELL_SIZE.collapseThreshold) {
-    return 1;
-  }
-
-  return imageCount;
+  return Math.max(1, Math.min(8, Math.floor(parsed)));
 }
 
 /* ─── Internal: Pixel Projection ────────────────────────────────── */
@@ -177,8 +175,12 @@ function buildSpatialGrid(pixelPositions, bounds, bucketSize) {
   const grid = new Map();
 
   for (let index = 0; index < pixelPositions.length; index++) {
-    const col = Math.floor((pixelPositions[index].x - bounds.minX) / bucketSize);
-    const row = Math.floor((pixelPositions[index].y - bounds.minY) / bucketSize);
+    const col = Math.floor(
+      (pixelPositions[index].x - bounds.minX) / bucketSize,
+    );
+    const row = Math.floor(
+      (pixelPositions[index].y - bounds.minY) / bucketSize,
+    );
     const cellKey = `${col},${row}`;
 
     if (!grid.has(cellKey)) {

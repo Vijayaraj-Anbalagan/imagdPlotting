@@ -13,10 +13,9 @@ import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
 
-
 const ZOOM_STEP = 1.5;
 const ZOOM_MIN = 0.35;
-const ZOOM_MAX = 100000;
+const ZOOM_MAX = 250;
 const BRUSH_MIN_PIXELS = 5;
 const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
 const BRUSH_STROKE = "#4493ff";
@@ -26,12 +25,18 @@ const BASE_IMAGE_GAP_X = 10;
 const BASE_IMAGE_GAP_Y = 10;
 
 function RechartsPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
-  const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
+  const {
+    plotterPoints: fetchedPoints,
+    isLoading,
+    loadError,
+  } = usePlotterData();
 
   const plotterPoints = syntheticPoints || fetchedPoints;
 
-  if (!syntheticPoints && isLoading) return <div className="plotter-loading">Loading data…</div>;
-  if (!syntheticPoints && loadError) return <div className="plotter-error">Error: {loadError}</div>;
+  if (!syntheticPoints && isLoading)
+    return <div className="plotter-loading">Loading data…</div>;
+  if (!syntheticPoints && loadError)
+    return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
     <RechartsCanvas
@@ -62,12 +67,8 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const [isDragging, setIsDragging] = useState(false);
   const brushStartRef = useRef(null);
 
-  const {
-    interactionMode,
-    setInteractionMode,
-    isZoomMode,
-    isPanMode,
-  } = useInteractionMode();
+  const { interactionMode, setInteractionMode, isPanMode } =
+    useInteractionMode();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -85,6 +86,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   useEffect(() => {
     if (isPanMode) {
       brushStartRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBrushRect(null);
     }
   }, [isPanMode]);
@@ -168,14 +170,12 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     [visibleDomain, innerHeight],
   );
 
-  const clipId = useMemo(
-    () => `recharts-clip-${Math.random().toString(36).slice(2)}`,
-    [],
-  );
+  const clipId = "recharts-clip-static";
 
-  /* Base cell size from unzoomed domain; multiply by transform.scale so images
-     grow with zoom — matching D3's zoomFactor * baseCellSize approach. */
-  const adaptiveCellSizeBase = useMemo(() => {
+  const adaptiveCellSizeForRender = useMemo(() => {
+    /* Compute from base scales (content-space) so the cell size is set at
+       the default zoom level. The SVG transform then naturally magnifies
+       images when zoomed in, revealing more detail. */
     return computeAdaptiveCellSize(
       normalizedPoints,
       (val) => baseXScale(val),
@@ -183,9 +183,8 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     );
   }, [normalizedPoints, baseXScale, baseYScale]);
 
-  const adaptiveCellSizeForRender = adaptiveCellSizeBase * transform.scale;
-
   const visiblePointsForRender = useMemo(() => {
+    /* Viewport culling still needs screen-space coordinates. */
     const xScreenFn = (val) => baseXScale(val) * transform.scale + transform.x;
     const yScreenFn = (val) => baseYScale(val) * transform.scale + transform.y;
     return filterVisiblePoints(
@@ -194,13 +193,25 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       yScreenFn,
       innerWidth,
       innerHeight,
-      adaptiveCellSizeBase * transform.scale,
+      adaptiveCellSizeForRender * transform.scale,
     );
-  }, [normalizedPoints, baseXScale, baseYScale, transform, innerWidth, innerHeight, adaptiveCellSizeBase]);
+  }, [
+    normalizedPoints,
+    baseXScale,
+    baseYScale,
+    transform,
+    innerWidth,
+    innerHeight,
+    adaptiveCellSizeForRender,
+  ]);
 
   const effectiveImageCountForRender = useMemo(
-    () => computeEffectiveImageCount(adaptiveCellSizeBase * transform.scale, imageCount),
-    [adaptiveCellSizeBase, transform.scale, imageCount],
+    () =>
+      computeEffectiveImageCount(
+        adaptiveCellSizeForRender * transform.scale,
+        imageCount,
+      ),
+    [adaptiveCellSizeForRender, transform.scale, imageCount],
   );
 
   const zoomTo = useCallback(
@@ -283,10 +294,10 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       });
 
       const factor = event.deltaY > 0 ? 1 / 1.15 : 1.15;
-      const nextScale = transform.scale * factor;
 
       setTransform((prev) => {
-        const clampedScale = clamp(nextScale, ZOOM_MIN, ZOOM_MAX);
+        const clampedScale = clamp(prev.scale * factor, ZOOM_MIN, ZOOM_MAX);
+
         const nextX =
           prev.x - (localX - prev.x) * (clampedScale / prev.scale - 1);
         const nextY =
@@ -298,7 +309,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         );
       });
     },
-    [innerWidth, innerHeight, transform.scale],
+    [innerWidth, innerHeight],
   );
 
   const handlePointerDown = useCallback(
@@ -442,6 +453,25 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     [brushRect, transform, innerWidth, innerHeight],
   );
 
+  useEffect(() => {
+    const svgElement = svgRef.current;
+
+    if (!svgElement) return;
+
+    const wheelHandler = (event) => {
+      event.preventDefault();
+      handleWheel(event);
+    };
+
+    svgElement.addEventListener("wheel", wheelHandler, {
+      passive: false,
+    });
+
+    return () => {
+      svgElement.removeEventListener("wheel", wheelHandler);
+    };
+  }, [handleWheel]);
+
   const handleDoubleClick = useCallback(() => {
     logChartInteractionEvent({
       interactionType: "RESET",
@@ -453,7 +483,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   }, []);
 
   const stageCursor = isPanMode
-    ? (isDragging ? "grabbing" : "grab")
+    ? isDragging
+      ? "grabbing"
+      : "grab"
     : "crosshair";
 
   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
@@ -479,7 +511,6 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
           userSelect: "none",
           cursor: stageCursor,
         }}
-        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -533,13 +564,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
           />
 
           <g clipPath={`url(#${clipId})`}>
-            <g>
+            <g transform={contentTransform}>
               {visiblePointsForRender.map((point) => (
                 <ImagePoint
                   key={point.id}
                   point={point}
-                  xScale={xTickScale}
-                  yScale={yTickScale}
+                  baseXScale={baseXScale}
+                  baseYScale={baseYScale}
                   imageCount={effectiveImageCountForRender}
                   adaptiveCellSize={adaptiveCellSizeForRender}
                 />
@@ -598,9 +629,15 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   );
 }
 
-function ImagePoint({ point, xScale, yScale, imageCount, adaptiveCellSize }) {
-  const centerX = xScale(point.scaledX);
-  const centerY = yScale(point.scaledY);
+function ImagePoint({
+  point,
+  baseXScale,
+  baseYScale,
+  imageCount,
+  adaptiveCellSize,
+}) {
+  const centerX = baseXScale(point.scaledX);
+  const centerY = baseYScale(point.scaledY);
   const cellSize = adaptiveCellSize ?? CELL_SIZE;
 
   const positions = computeImagePositions(
@@ -615,14 +652,14 @@ function ImagePoint({ point, xScale, yScale, imageCount, adaptiveCellSize }) {
     <>
       {positions.map((position, index) => (
         <image
-          key={`${point.id}-${index}`}
+          key={`${point.id}-${imageCount}-${index}`}
           data-point-id={point.id}
           href={point.image}
           x={position.x}
           y={position.y}
           width={position.width}
           height={position.height}
-          preserveAspectRatio="xMidYMid slice"
+          preserveAspectRatio="xMidYMid meet"
           style={{ cursor: "pointer" }}
         />
       ))}

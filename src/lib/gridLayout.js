@@ -1,60 +1,90 @@
+import { MAX_RENDER_IMAGES, IMAGE_PADDING } from "./constants";
+
 /**
- * Computes sub-image positions within a cell for multi-image rendering.
- *
- * Given an imageCount (1, 2, 4, or 8), returns an array of
- * { offsetX, offsetY, width, height } objects describing
- * each sub-image's position relative to the cell center.
+ * Computes deterministic grid offsets for ANY image count.
  */
 export function computeGridOffsets(cellWidth, cellHeight, imageCount) {
-  const gridConfig = getGridConfig(imageCount);
-  const subWidth = cellWidth / gridConfig.columns;
-  const subHeight = cellHeight / gridConfig.rows;
+  const safeImageCount = sanitizeImageCount(imageCount);
+
+  const columns = Math.ceil(Math.sqrt(safeImageCount));
+  const rows = Math.ceil(safeImageCount / columns);
+
+  const subWidth = Math.max(2, cellWidth - columns * IMAGE_PADDING);
+
+  const subHeight = Math.max(2, cellHeight - rows * IMAGE_PADDING);
+
   const offsets = [];
 
-  for (let row = 0; row < gridConfig.rows; row++) {
-    for (let col = 0; col < gridConfig.columns; col++) {
-      if (offsets.length >= imageCount) break;
+  const centeredOffsetX = ((columns - 1) * subWidth) / 2;
 
-      const xPos = col * subWidth - ((gridConfig.columns - 1) * subWidth) / 2;
-      const yPos = row * subHeight - ((gridConfig.rows - 1) * subHeight) / 2;
+  const centeredOffsetY = ((rows - 1) * subHeight) / 2;
 
-      offsets.push({
-        offsetX: xPos,
-        offsetY: yPos,
-        width: subWidth,
-        height: subHeight,
-      });
-    }
+  for (let index = 0; index < safeImageCount; index++) {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+
+    const offsetX = column * subWidth - centeredOffsetX;
+
+    const offsetY = row * subHeight - centeredOffsetY;
+
+    offsets.push({
+      offsetX,
+      offsetY,
+      width: subWidth,
+      height: subHeight,
+    });
   }
 
   return offsets;
 }
 
 /**
- * Returns grid rows/columns for a given image count.
+ * Computes deterministic image positions.
  */
-function getGridConfig(imageCount) {
-  const configs = {
-    1: { rows: 1, columns: 1 },
-    2: { rows: 1, columns: 2 },
-    4: { rows: 2, columns: 2 },
-    8: { rows: 2, columns: 4 },
-  };
+export function computeImagePositions(
+  centerX,
+  centerY,
+  cellWidth,
+  cellHeight,
+  imageCount,
+) {
+  const safeImageCount = sanitizeImageCount(imageCount);
 
-  return configs[imageCount] || configs[1];
+  const offsets = computeGridOffsets(cellWidth, cellHeight, safeImageCount);
+
+  const positions = [];
+
+  for (let index = 0; index < offsets.length; index++) {
+    if (positions.length >= MAX_RENDER_IMAGES) {
+      break;
+    }
+
+    const offset = offsets[index];
+
+    positions.push({
+      imageIndex: index,
+
+      x: centerX + offset.offsetX - offset.width / 2,
+
+      y: centerY + offset.offsetY - offset.height / 2,
+
+      width: offset.width,
+      height: offset.height,
+    });
+  }
+
+  return positions;
 }
 
 /**
- * Computes absolute positions for sub-images at a given coordinate.
- * Returns array of { x, y, width, height } for each sub-image.
+ * Normalizes image counts.
  */
-export function computeImagePositions(centerX, centerY, cellWidth, cellHeight, imageCount) {
-  const offsets = computeGridOffsets(cellWidth, cellHeight, imageCount);
+function sanitizeImageCount(imageCount) {
+  const parsed = Number(imageCount);
 
-  return offsets.map((offset) => ({
-    x: centerX + offset.offsetX - offset.width / 2,
-    y: centerY + offset.offsetY - offset.height / 2,
-    width: offset.width,
-    height: offset.height,
-  }));
+  if (Number.isNaN(parsed)) {
+    return 1;
+  }
+
+  return Math.max(1, Math.min(1000, Math.floor(parsed)));
 }

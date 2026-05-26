@@ -45,7 +45,7 @@ const IGNORE_FILES = [
 const IGNORE_EXTENSIONS = [
   ".png",
   ".jpg",
-  ".jpeg",
+  ".jpg",
   ".gif",
   ".svg",
   ".webp",

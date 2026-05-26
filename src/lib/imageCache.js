@@ -1,37 +1,41 @@
-const loadedImageObjects = {};
+const imageCache = new Map();
 
 /**
- * Preloads a list of unique image source URLs and caches their HTML Image objects.
- * @param {Array} imageSourceList - List of image URL strings
- * @returns {Promise} Resolves when all images have finished loading
+ * Preloads image sources.
  */
-export function preloadImageSources(imageSourceList) {
+export async function preloadImageSources(imageSourceList) {
   const uniqueSources = [...new Set(imageSourceList)];
+
   const loadPromises = uniqueSources.map((source) => {
-    if (loadedImageObjects[source]) {
-      return Promise.resolve(loadedImageObjects[source]);
+    if (imageCache.has(source)) {
+      return Promise.resolve(imageCache.get(source));
     }
+
     return new Promise((resolve) => {
-      const htmlImage = new window.Image();
-      htmlImage.crossOrigin = "anonymous";
-      htmlImage.src = source;
-      htmlImage.onload = () => {
-        loadedImageObjects[source] = htmlImage;
-        resolve(htmlImage);
+      const image = new window.Image();
+
+      image.crossOrigin = "anonymous";
+
+      image.src = source;
+
+      image.onload = () => {
+        imageCache.set(source, image);
+
+        resolve(image);
       };
-      htmlImage.onerror = () => {
+
+      image.onerror = () => {
         resolve(null);
       };
     });
   });
+
   return Promise.all(loadPromises);
 }
 
 /**
- * Retrieves a cached HTML Image object for a given source.
- * @param {string} source - The image source URL
- * @returns {HTMLImageElement|undefined} The cached image object
+ * Returns cached image.
  */
 export function getCachedImageObject(source) {
-  return loadedImageObjects[source];
+  return imageCache.get(source);
 }
