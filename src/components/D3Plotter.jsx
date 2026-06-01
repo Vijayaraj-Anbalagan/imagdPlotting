@@ -92,8 +92,9 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     plotControlsRef.current = initResult.controls;
     interactionCleanupRef.current = initResult.setActiveInteractionMode;
 
+    // Apply initial mode once after chart creation
     initResult.setActiveInteractionMode(interactionMode);
-  }, [plotterPoints, imageCount, containerWidth, xGap, yGap, interactionMode]);
+  }, [plotterPoints, imageCount, containerWidth, xGap, yGap]); // interactionMode removed
 
   useEffect(() => {
     if (interactionCleanupRef.current) {
@@ -271,14 +272,18 @@ function initializePlot(
   );
 
   const setActiveInteractionMode = (mode) => {
+    // Clear previous interactions
+    brushGroup.on(".brush", null);
+    panOverlay.on(".drag", null);
+
     if (mode === INTERACTION_MODES.ZOOM) {
       panOverlay.style("display", "none");
-      panOverlay.on(".drag", null);
+
       brushGroup.style("display", null);
       brushGroup.call(brush);
     } else {
       brushGroup.style("display", "none");
-      brushGroup.on(".brush", null);
+
       panOverlay.style("display", null);
       panOverlay.call(panDrag);
     }

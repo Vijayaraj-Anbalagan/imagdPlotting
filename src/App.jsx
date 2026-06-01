@@ -20,7 +20,7 @@ import {
 import "./App.css";
 
 function App() {
-  const [activeTab, setActiveTab] = useState("Recharts");
+  const [activeTab, setActiveTab] = useState(null);
 
   const [imageCount, setImageCount] = useState(1);
 
@@ -96,7 +96,21 @@ function App() {
         return <KonvaPlotter {...plotterProps} />;
 
       default:
-        return <RechartsPlotter {...plotterProps} />;
+        return (
+          <div
+            style={{
+              height: "600px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#888",
+              fontSize: "20px",
+              fontWeight: "500",
+            }}
+          >
+            Click a tab to render the chart
+          </div>
+        );
     }
   };
 

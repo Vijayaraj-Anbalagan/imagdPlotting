@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/purity */
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from "react";
 import * as d3 from "d3";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
@@ -23,6 +23,35 @@ const BRUSH_STROKE_WIDTH = 1.5;
 
 const BASE_IMAGE_GAP_X = 10;
 const BASE_IMAGE_GAP_Y = 10;
+
+const TooltipOverlay = memo(function TooltipOverlay({
+  hoveredPoint,
+  tooltipPos,
+}) {
+  if (!hoveredPoint) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: tooltipPos.x + 12,
+        top: tooltipPos.y + 12,
+        background: "#111",
+        border: "1px solid #333",
+        padding: "10px",
+        borderRadius: "8px",
+        color: "white",
+        fontSize: "12px",
+        pointerEvents: "none",
+        zIndex: 1000,
+      }}
+    >
+      <div>{hoveredPoint.label}</div>
+      <div>X: {hoveredPoint.x}</div>
+      <div>Y: {hoveredPoint.y}</div>
+    </div>
+  );
+});
 
 function RechartsPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
   const {
@@ -48,6 +77,28 @@ function RechartsPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
   );
 }
 
+const ControlsLayer = memo(function ControlsLayer({
+  zoomLevel,
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  interactionMode,
+  onModeChange,
+}) {
+  return (
+    <div style={{ position: "absolute", top: 0, left: 0, zIndex: 10 }}>
+      <PlotterControls
+        zoomLevel={zoomLevel}
+        onZoomIn={onZoomIn}
+        onZoomOut={onZoomOut}
+        onReset={onReset}
+        interactionMode={interactionMode}
+        onModeChange={onModeChange}
+      />
+    </div>
+  );
+});
+
 function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const containerRef = useRef(null);
   const svgRef = useRef(null);
@@ -61,8 +112,12 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
   const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
-  const [hoveredPoint, setHoveredPoint] = useState(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  const [tooltipState, setTooltipState] = useState({
+    point: null,
+    x: 0,
+    y: 0,
+  });
   const [brushRect, setBrushRect] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const brushStartRef = useRef(null);
@@ -90,6 +145,10 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       setBrushRect(null);
     }
   }, [isPanMode]);
+
+  // const imagePositions = useMemo(() => {
+  //   return computeImagePositions(imageCount, CELL_SIZE);
+  // }, [imageCount]);
 
   const height = PLOT_DIMENSIONS.height;
   const innerWidth = Math.max(
@@ -143,31 +202,38 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     [xExtent, yExtent, transform, innerWidth, innerHeight],
   );
 
-  const xTicks = useMemo(
-    () => d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8),
-    [visibleDomain],
-  );
-  const yTicks = useMemo(
-    () => d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6),
-    [visibleDomain],
-  );
+  const xTicks = useMemo(() => {
+    return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8);
+  }, [visibleDomain.xMin, visibleDomain.xMax]);
 
-  const xTickScale = useMemo(
-    () =>
-      d3
-        .scaleLinear()
-        .domain([visibleDomain.xMin, visibleDomain.xMax])
-        .range([0, innerWidth]),
-    [visibleDomain, innerWidth],
-  );
+  const yTicks = useMemo(() => {
+    return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6);
+  }, [visibleDomain.yMin, visibleDomain.yMax]);
 
-  const yTickScale = useMemo(
-    () =>
-      d3
-        .scaleLinear()
-        .domain([visibleDomain.yMin, visibleDomain.yMax])
-        .range([innerHeight, 0]),
-    [visibleDomain, innerHeight],
+  const xTickScale = useMemo(() => {
+    const scale = d3.scaleLinear();
+    scale.domain([visibleDomain.xMin, visibleDomain.xMax]);
+    scale.range([0, innerWidth]);
+    return scale;
+  }, [visibleDomain.xMin, visibleDomain.xMax, innerWidth]);
+
+  const yTickScale = useMemo(() => {
+    const scale = d3.scaleLinear();
+    scale.domain([visibleDomain.yMin, visibleDomain.yMax]);
+    scale.range([innerHeight, 0]);
+    return scale;
+  }, [visibleDomain.yMin, visibleDomain.yMax, innerHeight]);
+
+  const axisProps = useMemo(
+    () => ({
+      xTicks,
+      yTicks,
+      xTickScale,
+      yTickScale,
+      innerWidth,
+      innerHeight,
+    }),
+    [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight],
   );
 
   const clipId = "recharts-clip-static";
@@ -236,6 +302,11 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
     [innerWidth, innerHeight],
   );
 
+  const pointMap = useMemo(
+    () => new Map(plotterPoints.map((p) => [p.id, p])),
+    [plotterPoints],
+  );
+
   const handleZoomIn = useCallback(() => {
     logChartInteractionEvent({
       interactionType: "ZOOM_IN",
@@ -261,7 +332,11 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       interactionSource: "button",
     });
     setTransform({ scale: 1, x: 0, y: 0 });
-    setHoveredPoint(null);
+    setTooltipState({
+      point: null,
+      x: 0,
+      y: 0,
+    });
   }, []);
 
   const handleWheel = useCallback(
@@ -403,16 +478,33 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
       const target = event.target?.closest?.("[data-point-id]");
       if (!target) {
-        setHoveredPoint(null);
+        setTooltipState({
+          point: null,
+          x: 0,
+          y: 0,
+        });
         return;
       }
 
       const id = target.getAttribute("data-point-id");
-      const point = plotterPoints.find((p) => p.id === id);
+      const point = pointMap.get(id);
       if (!point) return;
 
-      setHoveredPoint(point);
-      setTooltipPos({ x: event.clientX, y: event.clientY });
+      setTooltipState((prev) => {
+        if (
+          prev.point?.id === point.id &&
+          prev.x === event.clientX &&
+          prev.y === event.clientY
+        ) {
+          return prev;
+        }
+
+        return {
+          point,
+          x: event.clientX,
+          y: event.clientY,
+        };
+      });
     },
     [innerWidth, innerHeight, plotterPoints],
   );
@@ -479,7 +571,11 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       interactionSource: "double_click",
     });
     setTransform({ scale: 1, x: 0, y: 0 });
-    setHoveredPoint(null);
+    setTooltipState({
+      point: null,
+      x: 0,
+      y: 0,
+    });
   }, []);
 
   const stageCursor = isPanMode
@@ -492,7 +588,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
-      <PlotterControls
+      <ControlsLayer
         zoomLevel={transform.scale}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
@@ -545,23 +641,9 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
             fill="#16213e"
           />
 
-          <AxisGrid
-            xTicks={xTicks}
-            yTicks={yTicks}
-            xTickScale={xTickScale}
-            yTickScale={yTickScale}
-            innerWidth={innerWidth}
-            innerHeight={innerHeight}
-          />
+          <AxisGrid {...axisProps} />
 
-          <AxisLabels
-            xTicks={xTicks}
-            yTicks={yTicks}
-            xTickScale={xTickScale}
-            yTickScale={yTickScale}
-            innerWidth={innerWidth}
-            innerHeight={innerHeight}
-          />
+          <AxisLabels {...axisProps} />
 
           <g clipPath={`url(#${clipId})`}>
             <g transform={contentTransform}>
@@ -605,31 +687,18 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
         </g>
       </svg>
 
-      {hoveredPoint && (
-        <div
-          className="plotter-tooltip"
-          style={{
-            display: "block",
-            position: "fixed",
-            left: tooltipPos.x + 12,
-            top: tooltipPos.y - 10,
-            pointerEvents: "none",
-            zIndex: 20,
-          }}
-        >
-          <div className="tooltip-label">{hoveredPoint.label}</div>
-          <div className="tooltip-meta">
-            <span>Interval: {hoveredPoint.meta.interval}s</span>
-            <span>Angle: {hoveredPoint.meta.angle}°</span>
-            <span>Quality: {hoveredPoint.meta.quality}</span>
-          </div>
-        </div>
-      )}
+      <TooltipOverlay
+        hoveredPoint={tooltipState.point}
+        tooltipPos={{
+          x: tooltipState.x,
+          y: tooltipState.y,
+        }}
+      />
     </div>
   );
 }
 
-function ImagePoint({
+const ImagePoint = memo(function ImagePoint({
   point,
   baseXScale,
   baseYScale,
@@ -640,12 +709,10 @@ function ImagePoint({
   const centerY = baseYScale(point.scaledY);
   const cellSize = adaptiveCellSize ?? CELL_SIZE;
 
-  const positions = computeImagePositions(
-    centerX,
-    centerY,
-    cellSize,
-    cellSize,
-    imageCount,
+  const positions = useMemo(
+    () =>
+      computeImagePositions(centerX, centerY, cellSize, cellSize, imageCount),
+    [centerX, centerY, cellSize, imageCount],
   );
 
   return (
@@ -665,9 +732,9 @@ function ImagePoint({
       ))}
     </>
   );
-}
+});
 
-function AxisGrid({
+const AxisGrid = memo(function AxisGrid({
   xTicks,
   yTicks,
   xTickScale,
@@ -708,9 +775,15 @@ function AxisGrid({
       })}
     </>
   );
-}
+});
 
-function AxisLabels({ xTicks, yTicks, xTickScale, yTickScale, innerHeight }) {
+const AxisLabels = memo(function AxisLabels({
+  xTicks,
+  yTicks,
+  xTickScale,
+  yTickScale,
+  innerHeight,
+}) {
   return (
     <>
       {xTicks.map((tick, index) => {
@@ -746,7 +819,7 @@ function AxisLabels({ xTicks, yTicks, xTickScale, yTickScale, innerHeight }) {
       })}
     </>
   );
-}
+});
 
 function extentWithPadding(values) {
   if (!values.length) return [0, 1];

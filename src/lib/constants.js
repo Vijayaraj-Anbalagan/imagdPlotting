@@ -19,7 +19,7 @@ export const MAX_IMAGES_PER_POINT = 8;
 export const DATA_POINT_LIMITS = {
   min: 1,
   max: 1000,
-  defaultCount: 16,
+  defaultCount: 100,
 };
 
 export const CELL_SIZE = 50;
