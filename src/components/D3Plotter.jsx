@@ -106,7 +106,7 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const handleZoomOut = () => plotControlsRef.current?.zoomOut();
   const handleReset = () => plotControlsRef.current?.resetZoom();
 
-  const cursorStyle = isZoomMode ? "crosshair" : "grab";
+  const cursorStyle = isZoomMode ? "crosshair" : "default";
 
   return (
     <div ref={containerRef} style={{ position: "relative" }}>
@@ -278,14 +278,13 @@ function initializePlot(
 
     if (mode === INTERACTION_MODES.ZOOM) {
       panOverlay.style("display", "none");
-
-      brushGroup.style("display", null);
+      panOverlay.on(".drag", null);
+      brushGroup.style("display", null).style("pointer-events", "all");
       brushGroup.call(brush);
     } else {
-      brushGroup.style("display", "none");
-
-      panOverlay.style("display", null);
-      panOverlay.call(panDrag);
+      brushGroup.style("display", "none").style("pointer-events", "none");
+      brushGroup.on(".brush", null);
+      panOverlay.style("display", "none");
     }
   };
 

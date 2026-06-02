@@ -26,16 +26,17 @@ const BASE_IMAGE_GAP_Y = 10;
 
 const TooltipOverlay = memo(function TooltipOverlay({
   hoveredPoint,
-  tooltipPos,
+  tooltipRef,
 }) {
   if (!hoveredPoint) return null;
 
   return (
     <div
+      ref={tooltipRef}
       style={{
         position: "fixed",
-        left: tooltipPos.x + 12,
-        top: tooltipPos.y + 12,
+        left: 0,
+        top: 0,
         background: "#111",
         border: "1px solid #333",
         padding: "10px",
@@ -112,12 +113,8 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
 
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
   const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
-
-  const [tooltipState, setTooltipState] = useState({
-    point: null,
-    x: 0,
-    y: 0,
-  });
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const tooltipRef = useRef(null);
   const [brushRect, setBrushRect] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const brushStartRef = useRef(null);
@@ -332,11 +329,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       interactionSource: "button",
     });
     setTransform({ scale: 1, x: 0, y: 0 });
-    setTooltipState({
-      point: null,
-      x: 0,
-      y: 0,
-    });
+    setHoveredPoint(null);
   }, []);
 
   const handleWheel = useCallback(
@@ -477,36 +470,39 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       }
 
       const target = event.target?.closest?.("[data-point-id]");
+
       if (!target) {
-        setTooltipState({
-          point: null,
-          x: 0,
-          y: 0,
-        });
+        setHoveredPoint((prev) => (prev ? null : prev));
         return;
       }
 
       const id = target.getAttribute("data-point-id");
       const point = pointMap.get(id);
-      if (!point) return;
 
-      setTooltipState((prev) => {
-        if (
-          prev.point?.id === point.id &&
-          prev.x === event.clientX &&
-          prev.y === event.clientY
-        ) {
-          return prev;
-        }
+      if (!point) {
+        setHoveredPoint((prev) => (prev ? null : prev));
+        return;
+      }
 
-        return {
-          point,
-          x: event.clientX,
-          y: event.clientY,
-        };
-      });
+      /*
+       * Move tooltip with cursor WITHOUT React state updates.
+       */
+      if (tooltipRef.current) {
+        tooltipRef.current.style.left = `${event.clientX + 12}px`;
+        tooltipRef.current.style.top = `${event.clientY + 12}px`;
+      }
+
+      if (hoveredPoint?.id !== point.id && tooltipRef.current) {
+        tooltipRef.current.style.left = `${event.clientX + 12}px`;
+        tooltipRef.current.style.top = `${event.clientY + 12}px`;
+      }
+
+      /*
+       * Re-render ONLY when changing image.
+       */
+      setHoveredPoint((prev) => (prev?.id === point.id ? prev : point));
     },
-    [innerWidth, innerHeight, plotterPoints],
+    [innerWidth, innerHeight, pointMap, hoveredPoint],
   );
 
   const handlePointerUp = useCallback(
@@ -571,11 +567,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       interactionSource: "double_click",
     });
     setTransform({ scale: 1, x: 0, y: 0 });
-    setTooltipState({
-      point: null,
-      x: 0,
-      y: 0,
-    });
+    setHoveredPoint(null);
   }, []);
 
   const stageCursor = isPanMode
@@ -686,14 +678,7 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
           )}
         </g>
       </svg>
-
-      <TooltipOverlay
-        hoveredPoint={tooltipState.point}
-        tooltipPos={{
-          x: tooltipState.x,
-          y: tooltipState.y,
-        }}
-      />
+      <TooltipOverlay hoveredPoint={hoveredPoint} tooltipRef={tooltipRef} />
     </div>
   );
 }
