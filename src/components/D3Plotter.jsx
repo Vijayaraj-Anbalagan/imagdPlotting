@@ -106,7 +106,7 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const handleZoomOut = () => plotControlsRef.current?.zoomOut();
   const handleReset = () => plotControlsRef.current?.resetZoom();
 
-  const cursorStyle = isZoomMode ? "crosshair" : "default";
+  const cursorStyle = isZoomMode ? "crosshair" : "grab";
 
   return (
     <div ref={containerRef} style={{ position: "relative" }}>
@@ -229,13 +229,6 @@ function initializePlot(
   const triggerRedraw = () => redrawPlotContent(redrawContext);
 
   const brushGroup = plotGroup.append("g").attr("class", "d3-brush");
-  const panOverlay = plotGroup
-    .append("rect")
-    .attr("class", "d3-pan-overlay")
-    .attr("width", innerWidth)
-    .attr("height", innerHeight)
-    .attr("fill", "transparent")
-    .style("display", "none");
 
   const brush = buildBrush(
     xScale,
@@ -245,6 +238,17 @@ function initializePlot(
     brushGroup,
     triggerRedraw,
   );
+  brushGroup.call(brush);
+
+  brushGroup.lower();
+  const panOverlay = plotGroup
+    .append("rect")
+    .attr("class", "d3-pan-overlay")
+    .attr("width", innerWidth)
+    .attr("height", innerHeight)
+    .attr("fill", "transparent")
+    .style("display", "none");
+
   const panDrag = buildPanDrag(
     xScale,
     yScale,
@@ -278,13 +282,16 @@ function initializePlot(
 
     if (mode === INTERACTION_MODES.ZOOM) {
       panOverlay.style("display", "none");
-      panOverlay.on(".drag", null);
-      brushGroup.style("display", null).style("pointer-events", "all");
+
+      brushGroup.style("display", null);
       brushGroup.call(brush);
+
+      brushGroup.select(".overlay").style("cursor", "crosshair");
     } else {
-      brushGroup.style("display", "none").style("pointer-events", "none");
-      brushGroup.on(".brush", null);
-      panOverlay.style("display", "none");
+      brushGroup.style("display", "none");
+
+      panOverlay.style("display", null);
+      panOverlay.call(panDrag);
     }
   };
 
@@ -741,7 +748,20 @@ function renderImagePoints(
         .attr("width", position.width)
         .attr("height", position.height)
         .attr("preserveAspectRatio", "xMidYMid meet")
-        .style("cursor", "pointer");
+        .style("cursor", "pointer")
+        .on("mouseenter", function () {
+          console.log("IMAGE ENTER");
+        })
+        .on("mouseenter", function () {
+          d3.select(".d3-brush .overlay").style("pointer-events", "none");
+
+          showTooltip(tooltip, event, point);
+        })
+        .on("mouseleave", function () {
+          d3.select(".d3-brush .overlay").style("pointer-events", "all");
+
+          hideTooltip(tooltip);
+        });
     });
 
     pointGroup
