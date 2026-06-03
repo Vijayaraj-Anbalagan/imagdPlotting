@@ -366,3 +366,82 @@ body {
 
   transform: scale(1.02);
 }
+
+.multi-chart-controls {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: #1f1f32;
+  border: 1px solid #333;
+  border-radius: 8px;
+}
+
+.multi-chart-toggle-row,
+.multi-chart-count-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.multi-chart-label {
+  color: #ddd;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.multi-chart-toggle {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #444;
+  color: white;
+  transition: 0.2s ease;
+}
+
+.multi-chart-toggle.active {
+  background: #2e8b57;
+}
+
+.multi-chart-input {
+  width: 80px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #555;
+  background: #222;
+  color: white;
+}
+
+.single-chart-wrapper {
+  width: 100%;
+}
+
+.multi-chart-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-bottom: 40vh;
+}
+
+.multi-chart-item {
+  width: 100%;
+  min-height: 78vh;
+  background: #181828;
+  border: 1px solid #2d2d44;
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.multi-chart-header {
+  color: #aaa;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.multi-mode-active {
+  max-width: 1400px;
+}

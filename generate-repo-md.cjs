@@ -1,5 +1,5 @@
 // save as: generate-repo-md.js
-// run with: node generate-repo-md.js
+// run: node generate-repo-md.js
 
 const fs = require("fs");
 const path = require("path");
@@ -13,7 +13,6 @@ const OUTPUT_FILE = "repository_dump.md";
  * ============================================
  */
 
-// folders to completely ignore
 const IGNORE_FOLDERS = [
   "node_modules",
   ".git",
@@ -24,28 +23,18 @@ const IGNORE_FOLDERS = [
   "coverage",
 ];
 
-// exact filenames to ignore
 const IGNORE_FILES = [
   "package-lock.json",
   "yarn.lock",
   "pnpm-lock.yaml",
   ".DS_Store",
-
-  // vite/react boilerplate
-  "vite.config.js",
-  "eslint.config.js",
   ".gitignore",
-  "index.html",
-  "App.css",
-  // optional
-  "README.md",
 ];
 
-// extensions to ignore
 const IGNORE_EXTENSIONS = [
   ".png",
   ".jpg",
-  ".jpg",
+  ".jpeg",
   ".gif",
   ".svg",
   ".webp",
@@ -58,20 +47,22 @@ const IGNORE_EXTENSIONS = [
   ".eot",
   ".map",
   ".lock",
-  ".css",
-  ".html",
 ];
 
-// include only these source code extensions
 const ALLOWED_EXTENSIONS = [
   ".js",
   ".jsx",
   ".ts",
   ".tsx",
   ".scss",
+  ".css",
   ".json",
   ".md",
+  ".html",
 ];
+
+// split large files into chunks (important for LLMs)
+const MAX_LINES_PER_CHUNK = 200;
 
 /**
  * ============================================
@@ -82,19 +73,11 @@ const ALLOWED_EXTENSIONS = [
 function shouldIgnore(filePath, fileName) {
   const ext = path.extname(fileName);
 
-  if (IGNORE_FILES.includes(fileName)) {
-    return true;
-  }
+  if (IGNORE_FILES.includes(fileName)) return true;
+  if (IGNORE_EXTENSIONS.includes(ext)) return true;
 
-  if (IGNORE_EXTENSIONS.includes(ext)) {
-    return true;
-  }
-
-  if (
-    fs.statSync(filePath).isDirectory() &&
-    IGNORE_FOLDERS.includes(fileName)
-  ) {
-    return true;
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+    return IGNORE_FOLDERS.includes(fileName);
   }
 
   return false;
@@ -106,20 +89,20 @@ function generateTree(dir, prefix = "") {
   const items = fs
     .readdirSync(dir)
     .filter((item) => {
-      const fullPath = path.join(dir, item);
-      return !shouldIgnore(fullPath, item);
+      const full = path.join(dir, item);
+      return !shouldIgnore(full, item);
     })
-    .sort((a, b) => a.localeCompare(b));
+    .sort();
 
   items.forEach((item, index) => {
-    const fullPath = path.join(dir, item);
+    const full = path.join(dir, item);
     const isLast = index === items.length - 1;
-    const connector = isLast ? "└── " : "├── ";
 
+    const connector = isLast ? "└── " : "├── ";
     output += `${prefix}${connector}${item}\n`;
 
-    if (fs.statSync(fullPath).isDirectory()) {
-      output += generateTree(fullPath, prefix + (isLast ? "    " : "│   "));
+    if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
+      output += generateTree(full, prefix + (isLast ? "    " : "│   "));
     }
   });
 
@@ -130,21 +113,18 @@ function collectFiles(dir, files = []) {
   const items = fs.readdirSync(dir);
 
   for (const item of items) {
-    const fullPath = path.join(dir, item);
+    const full = path.join(dir, item);
 
-    if (shouldIgnore(fullPath, item)) {
-      continue;
-    }
+    if (shouldIgnore(full, item)) continue;
 
-    const stat = fs.statSync(fullPath);
+    const stat = fs.statSync(full);
 
     if (stat.isDirectory()) {
-      collectFiles(fullPath, files);
+      collectFiles(full, files);
     } else {
       const ext = path.extname(item);
-
       if (ALLOWED_EXTENSIONS.includes(ext)) {
-        files.push(fullPath);
+        files.push(full);
       }
     }
   }
@@ -152,11 +132,11 @@ function collectFiles(dir, files = []) {
   return files;
 }
 
-function safeReadFile(filePath) {
+function safeRead(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
-  } catch (err) {
-    return `ERROR READING FILE: ${err.message}`;
+  } catch (e) {
+    return `ERROR READING FILE: ${e.message}`;
   }
 }
 
@@ -172,8 +152,47 @@ function getLanguage(ext) {
     ".json": "json",
     ".md": "markdown",
   };
-
   return map[ext] || "";
+}
+
+/**
+ * Add line numbers (VERY important for AI patching)
+ */
+function addLineNumbers(content) {
+  const lines = content.split("\n");
+
+  return lines
+    .map((line, i) => {
+      const num = String(i + 1).padStart(4, " ");
+      return `${num} | ${line}`;
+    })
+    .join("\n");
+}
+
+/**
+ * Split big files into chunks
+ */
+function chunkLines(content) {
+  const lines = content.split("\n");
+  const chunks = [];
+
+  for (let i = 0; i < lines.length; i += MAX_LINES_PER_CHUNK) {
+    chunks.push(lines.slice(i, i + MAX_LINES_PER_CHUNK));
+  }
+
+  return chunks;
+}
+
+/**
+ * Simple hash (for change tracking)
+ */
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16);
 }
 
 /**
@@ -185,36 +204,50 @@ function getLanguage(ext) {
 function generateMarkdown() {
   let md = "";
 
-  // title
-  md += `# Repository Dump\n\n`;
+  md += `# Repository Dump (AI Friendly)\n\n`;
+  md += `> Generated: ${new Date().toISOString()}\n\n`;
 
-  // folder structure
+  /**
+   * TREE
+   */
   md += `## Folder Structure\n\n`;
   md += "```txt\n";
   md += path.basename(ROOT_DIR) + "\n";
   md += generateTree(ROOT_DIR);
   md += "```\n\n";
 
-  // files
-  md += `## Files\n\n`;
+  /**
+   * FILES
+   */
+  md += `## Files (with line numbers)\n\n`;
 
   const files = collectFiles(ROOT_DIR);
 
-  files.forEach((filePath) => {
-    const relativePath = path.relative(ROOT_DIR, filePath);
+  for (const filePath of files) {
+    const relative = path.relative(ROOT_DIR, filePath);
     const ext = path.extname(filePath);
-    const language = getLanguage(ext);
+    const lang = getLanguage(ext);
 
-    md += `---\n\n`;
-    md += `# ${relativePath}\n\n`;
-    md += `\`\`\`${language}\n`;
-    md += safeReadFile(filePath);
-    md += `\n\`\`\`\n\n`;
-  });
+    const raw = safeRead(filePath);
+    const hash = hashString(raw);
+
+    const chunks = chunkLines(addLineNumbers(raw));
+
+    md += `\n---\n\n`;
+    md += `## 📄 ${relative}\n`;
+    md += `**hash:** \`${hash}\`\n\n`;
+
+    chunks.forEach((chunk, idx) => {
+      md += `### Chunk ${idx + 1}/${chunks.length}\n\n`;
+      md += "```" + lang + "\n";
+      md += chunk.join("\n");
+      md += "\n```\n\n";
+    });
+  }
 
   fs.writeFileSync(path.join(ROOT_DIR, OUTPUT_FILE), md, "utf8");
 
-  console.log(`✅ Markdown repository dump created: ${OUTPUT_FILE}`);
+  console.log(`✅ AI-ready repo dump created: ${OUTPUT_FILE}`);
 }
 
 generateMarkdown();

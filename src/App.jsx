@@ -24,6 +24,10 @@ function App() {
 
   const [imageCount, setImageCount] = useState(1);
 
+  const [multiChartMode, setMultiChartMode] = useState(false);
+
+  const [multiChartCount, setMultiChartCount] = useState(5);
+
   const [dataPointCount, setDataPointCount] = useState(
     DATA_POINT_LIMITS.defaultCount,
   );
@@ -55,6 +59,16 @@ function App() {
     setAppliedYGap(draftYGap);
   };
 
+  const handleMultiChartCountChange = (value) => {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) {
+      setMultiChartCount(2);
+      return;
+    }
+    const clamped = Math.max(2, Math.min(10, Math.floor(parsed)));
+    setMultiChartCount(clamped);
+  };
+
   /**
    * Critical normalization.
    */
@@ -81,23 +95,21 @@ function App() {
     syntheticPoints,
   };
 
-  const renderActivePlotter = () => {
+  const renderSinglePlotter = (key) => {
     switch (activeTab) {
       case "Recharts":
-        return <RechartsPlotter {...plotterProps} />;
-
+        return <RechartsPlotter key={key} {...plotterProps} />;
       case "D3":
-        return <D3Plotter {...plotterProps} />;
-
+        return <D3Plotter key={key} {...plotterProps} />;
       case "PixiJS":
-        return <PixiPlotter {...plotterProps} />;
-
+        return <PixiPlotter key={key} {...plotterProps} />;
       case "Konva":
-        return <KonvaPlotter {...plotterProps} />;
+        return <KonvaPlotter key={key} {...plotterProps} />;
 
       default:
         return (
           <div
+            key={key}
             style={{
               height: "600px",
               display: "flex",
@@ -114,8 +126,33 @@ function App() {
     }
   };
 
+  const renderCharts = () => {
+    if (!multiChartMode) {
+      return (
+        <div className="single-chart-wrapper">
+          {" "}
+          {renderSinglePlotter("single-chart")}{" "}
+        </div>
+      );
+    }
+    return (
+      <div className="multi-chart-wrapper">
+        {" "}
+        {Array.from({ length: multiChartCount }).map((_, index) => (
+          <div key={`chart-wrapper-${index}`} className="multi-chart-item">
+            {" "}
+            <div className="multi-chart-header"> Chart {index + 1} </div>{" "}
+            {renderSinglePlotter(`chart-${index}`)}{" "}
+          </div>
+        ))}{" "}
+      </div>
+    );
+  };
+
   return (
-    <div className="app-container">
+    <div
+      className={`app-container ${multiChartMode ? "multi-mode-active" : ""}`}
+    >
       <h1 className="app-title">Image Plotting System PoC</h1>
 
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -129,6 +166,35 @@ function App() {
         imageCount={imageCount}
         setImageCount={handleImageCountChange}
       />
+
+      <div className="multi-chart-controls">
+        {" "}
+        <div className="multi-chart-toggle-row">
+          {" "}
+          <label className="multi-chart-label"> Multi Chart Mode </label>{" "}
+          <button
+            className={`multi-chart-toggle ${multiChartMode ? "active" : ""}`}
+            onClick={() => setMultiChartMode((prev) => !prev)}
+          >
+            {" "}
+            {multiChartMode ? "Enabled" : "Disabled"}{" "}
+          </button>{" "}
+        </div>{" "}
+        {multiChartMode && (
+          <div className="multi-chart-count-row">
+            {" "}
+            <label className="multi-chart-label"> Charts Count </label>{" "}
+            <input
+              type="number"
+              min="2"
+              max="10"
+              value={multiChartCount}
+              onChange={(e) => handleMultiChartCountChange(e.target.value)}
+              className="multi-chart-input"
+            />{" "}
+          </div>
+        )}{" "}
+      </div>
 
       <div
         style={{
@@ -213,7 +279,7 @@ function App() {
         </button>
       </div>
 
-      <div className="viewer-container">{renderActivePlotter()}</div>
+      <div className="viewer-container">{renderCharts()}</div>
     </div>
   );
 }
