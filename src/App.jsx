@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import Navbar from "./components/Navbar";
 import ImageCountSelector from "./components/ImageCountSelector";
 import DataPointCountControl from "./components/DataPointCountControl";
@@ -28,6 +28,8 @@ function App() {
 
   const [multiChartCount, setMultiChartCount] = useState(5);
 
+  const [virtualiseCharts, setVirtualiseCharts] = useState(false);
+
   const [dataPointCount, setDataPointCount] = useState(
     DATA_POINT_LIMITS.defaultCount,
   );
@@ -41,6 +43,21 @@ function App() {
   const [draftYGap, setDraftYGap] = useState(10);
 
   const hasChanges = draftXGap !== appliedXGap || draftYGap !== appliedYGap;
+
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const rowVirtualizer = useWindowVirtualizer({
+    count: multiChartCount,
+    estimateSize: () => 720,
+    overscan: 1,
+  });
+
+  console.log(
+    "Visible charts:",
+    rowVirtualizer
+      .getVirtualItems()
+      .slice(0, 2)
+      .map((item) => item.index + 1),
+  );
 
   /**
    * Stable deterministic synthetic data.
@@ -95,16 +112,18 @@ function App() {
     syntheticPoints,
   };
 
-  const renderSinglePlotter = (key) => {
+  const renderSinglePlotter = ({ key, chartId }) => {
     switch (activeTab) {
       case "Recharts":
-        return <RechartsPlotter key={key} {...plotterProps} />;
+        return (
+          <RechartsPlotter key={key} chartId={chartId} {...plotterProps} />
+        );
       case "D3":
-        return <D3Plotter key={key} {...plotterProps} />;
+        return <D3Plotter key={key} chartId={chartId} {...plotterProps} />;
       case "PixiJS":
-        return <PixiPlotter key={key} {...plotterProps} />;
+        return <PixiPlotter key={key} chartId={chartId} {...plotterProps} />;
       case "Konva":
-        return <KonvaPlotter key={key} {...plotterProps} />;
+        return <KonvaPlotter key={key} chartId={chartId} {...plotterProps} />;
 
       default:
         return (
@@ -130,21 +149,77 @@ function App() {
     if (!multiChartMode) {
       return (
         <div className="single-chart-wrapper">
-          {" "}
-          {renderSinglePlotter("single-chart")}{" "}
+          {renderSinglePlotter("single-chart", "single-chart")}
         </div>
       );
     }
+
+    /**
+     * NON VIRTUALIZED
+     */
+    if (!virtualiseCharts) {
+      return (
+        <div className="multi-chart-wrapper">
+          {Array.from({
+            length: multiChartCount,
+          }).map((_, index) => (
+            <div key={`chart-wrapper-${index}`} className="multi-chart-item">
+              <div className="multi-chart-header">Chart {index + 1}</div>
+              {renderSinglePlotter({
+                key: `chart-${index}`,
+                chartId: `chart-${index}`,
+              })}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    /**
+     * VIRTUALIZED
+     */
     return (
-      <div className="multi-chart-wrapper">
-        {" "}
-        {Array.from({ length: multiChartCount }).map((_, index) => (
-          <div key={`chart-wrapper-${index}`} className="multi-chart-item">
-            {" "}
-            <div className="multi-chart-header"> Chart {index + 1} </div>{" "}
-            {renderSinglePlotter(`chart-${index}`)}{" "}
-          </div>
-        ))}{" "}
+      <div
+        style={{
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {rowVirtualizer
+            .getVirtualItems()
+            .slice(0, 2)
+            .map((virtualRow) => (
+              <div
+                key={virtualRow.key}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                  paddingBottom: "20px",
+                }}
+              >
+                <div className="multi-chart-item">
+                  <div className="multi-chart-header">
+                    Chart {virtualRow.index + 1}
+                  </div>
+
+                  {renderSinglePlotter({
+                    key: `chart-${virtualRow.index}`,
+                    chartId: `chart-${virtualRow.index}`,
+                  })}
+                </div>
+              </div>
+            ))}
+        </div>
       </div>
     );
   };
@@ -170,7 +245,6 @@ function App() {
       <div className="multi-chart-controls">
         {" "}
         <div className="multi-chart-toggle-row">
-          {" "}
           <label className="multi-chart-label"> Multi Chart Mode </label>{" "}
           <button
             className={`multi-chart-toggle ${multiChartMode ? "active" : ""}`}
@@ -178,6 +252,13 @@ function App() {
           >
             {" "}
             {multiChartMode ? "Enabled" : "Disabled"}{" "}
+          </button>{" "}
+          <label className="multi-chart-label">Virtualise Charts</label>
+          <button
+            className={`multi-chart-toggle ${virtualiseCharts ? "active" : ""}`}
+            onClick={() => setVirtualiseCharts((prev) => !prev)}
+          >
+            {virtualiseCharts ? "Enabled" : "Disabled"}
           </button>{" "}
         </div>{" "}
         {multiChartMode && (

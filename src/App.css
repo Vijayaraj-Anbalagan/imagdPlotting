@@ -445,3 +445,19 @@ body {
 .multi-mode-active {
   max-width: 1400px;
 }
+
+.multi-chart-item {
+  height: 820px;
+  padding-bottom: 20px;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid red;
+}
+
+.multi-chart-wrapper {
+  width: 100%;
+}
+
+.single-chart-wrapper {
+  width: 100%;
+}

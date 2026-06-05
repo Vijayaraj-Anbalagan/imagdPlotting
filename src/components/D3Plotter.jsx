@@ -3,7 +3,10 @@ import * as d3 from "d3";
 import { usePlotterData } from "../lib/plotterData";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode, INTERACTION_MODES } from "../lib/interactionMode";
-
+import {
+  getChartViewport,
+  updateChartViewport,
+} from "../lib/chartViewportStore";
 import { computeImagePositions } from "../lib/gridLayout";
 import {
   CELL_SIZE,
@@ -22,7 +25,7 @@ import PlotterControls from "./PlotterControls";
 
 /* ─── Entry Component ───────────────────────────────────────────── */
 
-function D3Plotter({ imageCount, xGap, yGap, syntheticPoints }) {
+function D3Plotter({ chartId, imageCount, xGap, yGap, syntheticPoints }) {
   const {
     plotterPoints: fetchedPoints,
     isLoading,
@@ -42,13 +45,14 @@ function D3Plotter({ imageCount, xGap, yGap, syntheticPoints }) {
       imageCount={imageCount}
       xGap={xGap}
       yGap={yGap}
+      chartId={chartId}
     />
   );
 }
 
 /* ─── Canvas Wrapper ────────────────────────────────────────────── */
 
-function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
+function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
   const svgRef = useRef(null);
   const tooltipRef = useRef(null);
   const containerRef = useRef(null);
@@ -87,6 +91,7 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       yGap,
       originalXDomainRef,
       originalYDomainRef,
+      chartId,
     );
 
     plotControlsRef.current = initResult.controls;
@@ -105,7 +110,6 @@ function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   const handleZoomIn = () => plotControlsRef.current?.zoomIn();
   const handleZoomOut = () => plotControlsRef.current?.zoomOut();
   const handleReset = () => plotControlsRef.current?.resetZoom();
-
   const cursorStyle = isZoomMode ? "crosshair" : "grab";
 
   return (
@@ -139,6 +143,7 @@ function initializePlot(
   yGap,
   originalXDomainRef,
   originalYDomainRef,
+  chartId,
 ) {
   const width = containerWidth;
   const height = PLOT_DIMENSIONS.height;
@@ -158,6 +163,22 @@ function initializePlot(
 
   originalXDomainRef.current = xScale.domain().slice();
   originalYDomainRef.current = yScale.domain().slice();
+
+  const originalDomainSpanX =
+    originalXDomainRef.current[1] - originalXDomainRef.current[0];
+
+  const originalDomainSpanY =
+    originalYDomainRef.current[1] - originalYDomainRef.current[0];
+
+  const savedViewport = getChartViewport(chartId);
+
+  if (savedViewport.xDomain) {
+    xScale.domain(savedViewport.xDomain);
+  }
+
+  if (savedViewport.yDomain) {
+    yScale.domain(savedViewport.yDomain);
+  }
 
   const clipId = "plot-clip-" + Math.random().toString(36).slice(2);
   svg
@@ -187,17 +208,32 @@ function initializePlot(
     CELL_SIZE,
   );
 
-  const baseCellSize = computeAdaptiveCellSize(
-    initialVisiblePoints,
-    (val) => xScale(val),
-    (val) => yScale(val),
-  );
+  const baseCellSize =
+    savedViewport.baseCellSize ??
+    computeAdaptiveCellSize(
+      initialVisiblePoints,
+      (val) => xScale(val),
+      (val) => yScale(val),
+    );
 
-  const originalDomainSpanX = xScale.domain()[1] - xScale.domain()[0];
-  const originalDomainSpanY = yScale.domain()[1] - yScale.domain()[0];
+  updateChartViewport(chartId, {
+    baseCellSize,
+  });
+
+  const currentSpanX = xScale.domain()[1] - xScale.domain()[0];
+
+  const currentSpanY = yScale.domain()[1] - yScale.domain()[0];
+
+  const zoomFactorX = originalDomainSpanX / currentSpanX;
+
+  const zoomFactorY = originalDomainSpanY / currentSpanY;
+
+  const zoomFactor = Math.min(zoomFactorX, zoomFactorY);
+
+  const zoomedCellSize = baseCellSize * zoomFactor;
 
   const initialEffectiveImageCount = computeEffectiveImageCount(
-    baseCellSize,
+    zoomedCellSize,
     imageCount,
   );
 
@@ -208,7 +244,7 @@ function initializePlot(
     yScale,
     initialEffectiveImageCount,
     tooltipElement,
-    baseCellSize,
+    zoomedCellSize,
   );
 
   const redrawContext = {
@@ -237,6 +273,7 @@ function initializePlot(
     innerHeight,
     brushGroup,
     triggerRedraw,
+    chartId,
   );
   brushGroup.call(brush);
 
@@ -255,6 +292,7 @@ function initializePlot(
     innerWidth,
     innerHeight,
     triggerRedraw,
+    chartId,
   );
 
   attachWheelZoom(
@@ -265,6 +303,7 @@ function initializePlot(
     innerWidth,
     innerHeight,
     triggerRedraw,
+    chartId,
   );
   attachDoubleClickReset(
     svg,
@@ -273,6 +312,7 @@ function initializePlot(
     originalXDomainRef,
     originalYDomainRef,
     triggerRedraw,
+    chartId,
   );
 
   const setActiveInteractionMode = (mode) => {
@@ -301,6 +341,7 @@ function initializePlot(
     originalXDomainRef,
     originalYDomainRef,
     triggerRedraw,
+    chartId,
   );
 
   return { controls, setActiveInteractionMode };
@@ -339,6 +380,7 @@ function buildBrush(
   innerHeight,
   brushGroup,
   redrawCallback,
+  chartId,
 ) {
   const brush = d3
     .brush()
@@ -347,7 +389,15 @@ function buildBrush(
       [innerWidth, innerHeight],
     ])
     .on("end", (event) => {
-      handleBrushEnd(event, brush, brushGroup, xScale, yScale, redrawCallback);
+      handleBrushEnd(
+        event,
+        brush,
+        brushGroup,
+        xScale,
+        yScale,
+        redrawCallback,
+        chartId,
+      );
     });
 
   return brush;
@@ -360,6 +410,7 @@ function handleBrushEnd(
   xScale,
   yScale,
   redrawCallback,
+  chartId,
 ) {
   const selection = event.selection;
   if (!selection) return;
@@ -388,13 +439,25 @@ function handleBrushEnd(
   xScale.domain(newXDomain);
   yScale.domain(newYDomain);
 
+  updateChartViewport(chartId, {
+    xDomain: newXDomain,
+    yDomain: newYDomain,
+  });
+
   brushGroup.call(brush.move, null);
   redrawCallback();
 }
 
 /* ─── Pan Drag ──────────────────────────────────────────────────── */
 
-function buildPanDrag(xScale, yScale, innerWidth, innerHeight, redrawCallback) {
+function buildPanDrag(
+  xScale,
+  yScale,
+  innerWidth,
+  innerHeight,
+  redrawCallback,
+  chartId,
+) {
   let startXDomain = null;
   let startYDomain = null;
 
@@ -430,6 +493,11 @@ function buildPanDrag(xScale, yScale, innerWidth, innerHeight, redrawCallback) {
         currentYDomain[1] + domainDeltaY,
       ]);
 
+      updateChartViewport(chartId, {
+        xDomain: xScale.domain().slice(),
+        yDomain: yScale.domain().slice(),
+      });
+
       redrawCallback();
     })
     .on("end", () => {
@@ -448,6 +516,7 @@ function attachWheelZoom(
   innerWidth,
   innerHeight,
   redrawCallback,
+  chartId,
 ) {
   svg.on(
     "wheel.zoom",
@@ -461,6 +530,7 @@ function attachWheelZoom(
         innerWidth,
         innerHeight,
         redrawCallback,
+        chartId,
       );
     },
     { passive: false },
@@ -475,6 +545,7 @@ function handleWheelZoom(
   innerWidth,
   innerHeight,
   redrawCallback,
+  chartId,
 ) {
   const zoomFactor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
 
@@ -503,6 +574,11 @@ function handleWheelZoom(
   zoomDomainAroundAnchor(xScale, anchorDataX, zoomFactor);
   zoomDomainAroundAnchor(yScale, anchorDataY, zoomFactor);
 
+  updateChartViewport(chartId, {
+    xDomain: xScale.domain().slice(),
+    yDomain: yScale.domain().slice(),
+  });
+
   redrawCallback();
 }
 
@@ -515,6 +591,7 @@ function attachDoubleClickReset(
   originalXDomainRef,
   originalYDomainRef,
   redrawCallback,
+  chartId,
 ) {
   svg.on("dblclick.zoom", () => {
     logChartInteractionEvent({
@@ -523,6 +600,10 @@ function attachDoubleClickReset(
       interactionSource: "double_click",
     });
     resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
+    updateChartViewport(chartId, {
+      xDomain: originalXDomainRef.current.slice(),
+      yDomain: originalYDomainRef.current.slice(),
+    });
     redrawCallback();
   });
 }
@@ -555,6 +636,7 @@ function buildPlotControls(
   originalXDomainRef,
   originalYDomainRef,
   redrawCallback,
+  chartId,
 ) {
   return {
     zoomIn: () => {
@@ -565,6 +647,10 @@ function buildPlotControls(
       });
       zoomDomainAroundCenter(xScale, ZOOM_SCALE_FACTOR);
       zoomDomainAroundCenter(yScale, ZOOM_SCALE_FACTOR);
+      updateChartViewport(chartId, {
+        xDomain: xScale.domain().slice(),
+        yDomain: yScale.domain().slice(),
+      });
       redrawCallback();
     },
     zoomOut: () => {
@@ -575,6 +661,10 @@ function buildPlotControls(
       });
       zoomDomainAroundCenter(xScale, 1 / ZOOM_SCALE_FACTOR);
       zoomDomainAroundCenter(yScale, 1 / ZOOM_SCALE_FACTOR);
+      updateChartViewport(chartId, {
+        xDomain: xScale.domain().slice(),
+        yDomain: yScale.domain().slice(),
+      });
       redrawCallback();
     },
     resetZoom: () => {
@@ -584,6 +674,10 @@ function buildPlotControls(
         interactionSource: "button",
       });
       resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
+      updateChartViewport(chartId, {
+        xDomain: originalXDomainRef.current.slice(),
+        yDomain: originalYDomainRef.current.slice(),
+      });
       redrawCallback();
     },
   };

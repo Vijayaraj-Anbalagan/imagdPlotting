@@ -12,6 +12,10 @@ import {
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
+import {
+  getChartViewport,
+  updateChartViewport,
+} from "../lib/chartViewportStore";
 
 const ZOOM_STEP = 1.5;
 const ZOOM_MIN = 0.35;
@@ -54,7 +58,7 @@ const TooltipOverlay = memo(function TooltipOverlay({
   );
 });
 
-function RechartsPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
+function RechartsPlotter({ chartId, imageCount, xGap, yGap, syntheticPoints }) {
   const {
     plotterPoints: fetchedPoints,
     isLoading,
@@ -74,6 +78,7 @@ function RechartsPlotter({ imageCount, xGap, yGap, syntheticPoints }) {
       imageCount={imageCount}
       xGap={xGap}
       yGap={yGap}
+      chartId={chartId}
     />
   );
 }
@@ -100,7 +105,7 @@ const ControlsLayer = memo(function ControlsLayer({
   );
 });
 
-function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
+function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
   const containerRef = useRef(null);
   const svgRef = useRef(null);
   const dragRef = useRef({
@@ -112,7 +117,13 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
   });
 
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
-  const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const initialViewportRef = useRef(getChartViewport(chartId));
+  // eslint-disable-next-line react-hooks/refs
+  const [transform, setTransform] = useState(() => ({
+    scale: initialViewportRef.current.scale || 1,
+    x: initialViewportRef.current.translateX || 0,
+    y: initialViewportRef.current.translateY || 0,
+  }));
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const tooltipRef = useRef(null);
   const [brushRect, setBrushRect] = useState(null);
@@ -142,6 +153,24 @@ function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap }) {
       setBrushRect(null);
     }
   }, [isPanMode]);
+
+  useEffect(() => {
+    updateChartViewport(chartId, {
+      scale: transform.scale,
+      translateX: transform.x,
+      translateY: transform.y,
+    });
+  }, [chartId, transform]);
+
+  useEffect(() => {
+    const saved = getChartViewport(chartId);
+
+    setTransform({
+      scale: saved?.scale ?? 1,
+      x: saved?.translateX ?? 0,
+      y: saved?.translateY ?? 0,
+    });
+  }, [chartId]);
 
   // const imagePositions = useMemo(() => {
   //   return computeImagePositions(imageCount, CELL_SIZE);

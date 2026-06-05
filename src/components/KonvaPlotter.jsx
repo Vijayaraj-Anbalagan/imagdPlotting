@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   Stage,
@@ -20,7 +21,10 @@ import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
 import { getCachedImageObject, preloadImageSources } from "../lib/imageCache";
-
+import {
+  getChartViewport,
+  updateChartViewport,
+} from "../lib/chartViewportStore";
 
 const AXIS_TICK_COUNT = 8;
 const EXTENT_PADDING_RATIO = 0.2;
@@ -38,40 +42,57 @@ const BRUSH_STROKE = "#4493ff";
 const BRUSH_STROKE_WIDTH = 1.5;
 const BRUSH_MIN_PIXELS = 5;
 
-function KonvaPlotter({ imageCount, syntheticPoints }) {
-  const { plotterPoints: fetchedPoints, isLoading, loadError } = usePlotterData();
+function KonvaPlotter({ chartId, imageCount, syntheticPoints }) {
+  const {
+    plotterPoints: fetchedPoints,
+    isLoading,
+    loadError,
+  } = usePlotterData();
   const [imagesLoaded, setImagesLoaded] = useState(false);
 
   const plotterPoints = syntheticPoints || fetchedPoints;
 
   useEffect(() => {
     if (!plotterPoints || plotterPoints.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setImagesLoaded(true);
       return;
     }
-    const uniqueSources = [...new Set(plotterPoints.map((point) => point.image))];
+    const uniqueSources = [
+      ...new Set(plotterPoints.map((point) => point.image)),
+    ];
     preloadImageSources(uniqueSources).then(() => {
       setImagesLoaded(true);
     });
   }, [plotterPoints]);
 
-  if (!syntheticPoints && isLoading) return <div className="plotter-loading">Loading data…</div>;
-  if (!syntheticPoints && loadError) return <div className="plotter-error">Error: {loadError}</div>;
-  if (!imagesLoaded) return <div className="plotter-loading">Preloading images…</div>;
+  if (!syntheticPoints && isLoading)
+    return <div className="plotter-loading">Loading data…</div>;
+  if (!syntheticPoints && loadError)
+    return <div className="plotter-error">Error: {loadError}</div>;
+  if (!imagesLoaded)
+    return <div className="plotter-loading">Preloading images…</div>;
 
   return (
     <KonvaCanvas
+      chartId={chartId}
       plotterPoints={plotterPoints}
       imageCount={imageCount}
     />
   );
 }
 
-function KonvaCanvas({ plotterPoints, imageCount }) {
+function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
   /* Hot-path viewport state stored in refs — mutations never trigger React
      reconciliation. A RAF-throttled forceUpdate flushes the view at ≤60 fps. */
-  const scaleRef = useRef(1);
-  const offsetRef = useRef({ x: 0, y: 0 });
+  const savedViewportRef = useRef(getChartViewport(chartId));
+
+  const scaleRef = useRef(savedViewportRef.current.scale ?? 1);
+
+  const offsetRef = useRef({
+    x: savedViewportRef.current.translateX ?? 0,
+    y: savedViewportRef.current.translateY ?? 0,
+  });
   const rafPendingRef = useRef(false);
   const [, forceUpdate] = useState(0);
 
@@ -83,8 +104,22 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
 
   const stageRef = useRef(null);
   const brushStartRef = useRef(null);
-  const dragRef = useRef({ dragging: false, startX: 0, startY: 0, startOffset: { x: 0, y: 0 } });
-  const draggableGroupRef = useRef(null);
+  const dragRef = useRef({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    startOffset: { x: 0, y: 0 },
+  });
+
+  const persistViewport = useCallback(() => {
+    if (!chartId) return;
+
+    updateChartViewport(chartId, {
+      scale: scaleRef.current,
+      translateX: offsetRef.current.x,
+      translateY: offsetRef.current.y,
+    });
+  }, [chartId]);
 
   /* Schedule a single React flush per animation frame. */
   const scheduleUpdate = useCallback(() => {
@@ -96,19 +131,14 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
     });
   }, []);
 
-  const {
-    interactionMode,
-    setInteractionMode,
-    isZoomMode,
-    isPanMode,
-  } = useInteractionMode();
+  const { interactionMode, setInteractionMode, isZoomMode, isPanMode } =
+    useInteractionMode();
 
   const innerWidth =
     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
   const innerHeight =
     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
-  /* Read hot-path state from refs — always current, never stale. */
   const contentScale = scaleRef.current;
   const contentOffset = offsetRef.current;
 
@@ -146,9 +176,22 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
   useEffect(() => {
     if (isPanMode) {
       brushStartRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBrushRect(null);
     }
   }, [isPanMode]);
+
+  useEffect(() => {
+    return () => {
+      if (!chartId) return;
+
+      updateChartViewport(chartId, {
+        scale: scaleRef.current,
+        translateX: offsetRef.current.x,
+        translateY: offsetRef.current.y,
+      });
+    };
+  }, [chartId]);
 
   /* Base cell size computed once from the full dataset. */
   const adaptiveCellSizeBase = useMemo(
@@ -172,7 +215,17 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
       adaptiveCellSizeBase * contentScale,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plotterPoints, xScale, yScale, contentScale, contentOffset.x, contentOffset.y, innerWidth, innerHeight, adaptiveCellSizeBase]);
+  }, [
+    plotterPoints,
+    xScale,
+    yScale,
+    contentScale,
+    contentOffset.x,
+    contentOffset.y,
+    innerWidth,
+    innerHeight,
+    adaptiveCellSizeBase,
+  ]);
 
   const effectiveImageCountForRender = computeEffectiveImageCount(
     adaptiveCellSizeForRender,
@@ -191,7 +244,10 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
 
       const nativeEvent = event.evt;
       const isPinchGesture = nativeEvent.ctrlKey;
-      const scaleDelta = computeWheelScaleDelta(nativeEvent.deltaY, isPinchGesture);
+      const scaleDelta = computeWheelScaleDelta(
+        nativeEvent.deltaY,
+        isPinchGesture,
+      );
       const currentScale = scaleRef.current;
       const currentOffset = offsetRef.current;
       const newScale = clampScale(currentScale * scaleDelta);
@@ -205,15 +261,24 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
       const mouseRelX = pointerPosition.x - PLOT_MARGIN.left - currentOffset.x;
       const mouseRelY = pointerPosition.y - PLOT_MARGIN.top - currentOffset.y;
 
-      const rawOffsetX = currentOffset.x - mouseRelX * (newScale / currentScale - 1);
-      const rawOffsetY = currentOffset.y - mouseRelY * (newScale / currentScale - 1);
-      const clampedOffset = clampContentOffset(rawOffsetX, rawOffsetY, newScale, innerWidth, innerHeight);
+      const rawOffsetX =
+        currentOffset.x - mouseRelX * (newScale / currentScale - 1);
+      const rawOffsetY =
+        currentOffset.y - mouseRelY * (newScale / currentScale - 1);
+      const clampedOffset = clampContentOffset(
+        rawOffsetX,
+        rawOffsetY,
+        newScale,
+        innerWidth,
+        innerHeight,
+      );
 
       scaleRef.current = newScale;
       offsetRef.current = clampedOffset;
+      persistViewport();
       scheduleUpdate();
     },
-    [innerWidth, innerHeight, scheduleUpdate],
+    [innerWidth, innerHeight, persistViewport, scheduleUpdate],
   );
 
   /* ── Pan drag — mutates refs, schedules RAF flush ── */
@@ -263,6 +328,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
           innerHeight,
         );
         offsetRef.current = clamped;
+        persistViewport();
         scheduleUpdate();
         return;
       }
@@ -279,7 +345,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
         });
       }
     },
-    [innerWidth, innerHeight, scheduleUpdate],
+    [innerWidth, innerHeight, persistViewport, scheduleUpdate],
   );
 
   const handleStageMouseUp = useCallback(
@@ -310,6 +376,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
           );
           scaleRef.current = zoomResult.scale;
           offsetRef.current = zoomResult.offset;
+          persistViewport();
           scheduleUpdate();
         }
       }
@@ -317,7 +384,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
       brushStartRef.current = null;
       setBrushRect(null);
     },
-    [innerWidth, innerHeight, scheduleUpdate],
+    [innerWidth, innerHeight, persistViewport, scheduleUpdate],
   );
 
   /* ── Button controls — mutate refs + scheduleUpdate ── */
@@ -332,12 +399,21 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const newScale = clampScale(currentScale * ZOOM_STEP);
-    const rawOffsetX = currentOffset.x - centerX * (newScale / currentScale - 1);
-    const rawOffsetY = currentOffset.y - centerY * (newScale / currentScale - 1);
+    const rawOffsetX =
+      currentOffset.x - centerX * (newScale / currentScale - 1);
+    const rawOffsetY =
+      currentOffset.y - centerY * (newScale / currentScale - 1);
     scaleRef.current = newScale;
-    offsetRef.current = clampContentOffset(rawOffsetX, rawOffsetY, newScale, innerWidth, innerHeight);
+    offsetRef.current = clampContentOffset(
+      rawOffsetX,
+      rawOffsetY,
+      newScale,
+      innerWidth,
+      innerHeight,
+    );
+    persistViewport();
     scheduleUpdate();
-  }, [innerWidth, innerHeight, scheduleUpdate]);
+  }, [innerWidth, innerHeight, persistViewport, scheduleUpdate]);
 
   const handleZoomOut = useCallback(() => {
     logChartInteractionEvent({
@@ -350,12 +426,21 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const newScale = clampScale(currentScale / ZOOM_STEP);
-    const rawOffsetX = currentOffset.x - centerX * (newScale / currentScale - 1);
-    const rawOffsetY = currentOffset.y - centerY * (newScale / currentScale - 1);
+    const rawOffsetX =
+      currentOffset.x - centerX * (newScale / currentScale - 1);
+    const rawOffsetY =
+      currentOffset.y - centerY * (newScale / currentScale - 1);
     scaleRef.current = newScale;
-    offsetRef.current = clampContentOffset(rawOffsetX, rawOffsetY, newScale, innerWidth, innerHeight);
+    offsetRef.current = clampContentOffset(
+      rawOffsetX,
+      rawOffsetY,
+      newScale,
+      innerWidth,
+      innerHeight,
+    );
+    persistViewport();
     scheduleUpdate();
-  }, [innerWidth, innerHeight, scheduleUpdate]);
+  }, [innerWidth, innerHeight, persistViewport, scheduleUpdate]);
 
   const handleReset = useCallback(() => {
     logChartInteractionEvent({
@@ -365,8 +450,9 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
     });
     scaleRef.current = 1;
     offsetRef.current = { x: 0, y: 0 };
+    persistViewport();
     scheduleUpdate();
-  }, [scheduleUpdate]);
+  }, [persistViewport, scheduleUpdate]);
 
   const handleDoubleClick = useCallback(() => {
     logChartInteractionEvent({
@@ -380,7 +466,9 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
   }, [scheduleUpdate]);
 
   const stageCursor = isPanMode
-    ? (isDragging ? "grabbing" : "grab")
+    ? isDragging
+      ? "grabbing"
+      : "grab"
     : "crosshair";
 
   return (
@@ -424,7 +512,10 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
 
         {/* Clipped content layer — images positioned from domain-derived scales */}
         <Layer>
-          <ClippedContentGroup innerWidth={innerWidth} innerHeight={innerHeight}>
+          <ClippedContentGroup
+            innerWidth={innerWidth}
+            innerHeight={innerHeight}
+          >
             {visiblePointsForRender.map((point) => (
               <ImagePointGroup
                 key={point.id}
@@ -458,9 +549,7 @@ function KonvaCanvas({ plotterPoints, imageCount }) {
   );
 }
 
-function BrushSelectionOverlay({
-  brushRect,
-}) {
+function BrushSelectionOverlay({ brushRect }) {
   return (
     <Group listening={false}>
       {/* Semi-transparent selection rectangle */}
@@ -480,11 +569,7 @@ function BrushSelectionOverlay({
   );
 }
 
-function ClippedContentGroup({
-  innerWidth,
-  innerHeight,
-  children,
-}) {
+function ClippedContentGroup({ innerWidth, innerHeight, children }) {
   const plotLeft = PLOT_MARGIN.left;
   const plotTop = PLOT_MARGIN.top;
 
@@ -494,12 +579,7 @@ function ClippedContentGroup({
 
   return (
     <Group clipFunc={clipFunction}>
-      <Group
-        x={plotLeft}
-        y={plotTop}
-        scaleX={1}
-        scaleY={1}
-      >
+      <Group x={plotLeft} y={plotTop} scaleX={1} scaleY={1}>
         {children}
       </Group>
     </Group>
@@ -767,10 +847,8 @@ function convertBrushToZoom(
   plotInnerWidth,
   plotInnerHeight,
 ) {
-  const contentX0 =
-    (brushPixelRect.x - currentOffset.x) / currentScale;
-  const contentY0 =
-    (brushPixelRect.y - currentOffset.y) / currentScale;
+  const contentX0 = (brushPixelRect.x - currentOffset.x) / currentScale;
+  const contentY0 = (brushPixelRect.y - currentOffset.y) / currentScale;
   const contentBrushWidth = brushPixelRect.width / currentScale;
   const contentBrushHeight = brushPixelRect.height / currentScale;
 
