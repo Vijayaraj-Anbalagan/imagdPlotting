@@ -1,6 +1,6 @@
 # Repository Dump (AI Friendly)
 
-> Generated: 2026-06-15T10:35:47.557Z
+> Generated: 2026-06-15T13:35:40.225Z
 
 ## Folder Structure
 
@@ -3295,41 +3295,33 @@ imagdPlotting
 ---
 
 ## 📄 src\components\ImageCountSelector.jsx
-**hash:** `3810d2f1`
+**hash:** `f42373a`
 
 ### Chunk 1/1
 
 ```jsx
-   1 | import { MAX_IMAGES_PER_POINT, MIN_IMAGES_PER_POINT } from "../lib/constants";
+   1 | import { IMAGE_COUNT_OPTIONS } from "../lib/constants";
    2 | 
    3 | function ImageCountSelector({ imageCount, setImageCount }) {
    4 |   return (
    5 |     <div className="image-count-selector">
    6 |       <span className="selector-label">Images per point:</span>
    7 | 
-   8 |       <input
-   9 |         type="number"
-  10 |         min={MIN_IMAGES_PER_POINT}
-  11 |         max={MAX_IMAGES_PER_POINT}
-  12 |         value={imageCount}
-  13 |         onChange={(e) => setImageCount(e.target.value)}
-  14 |         className="data-point-input"
-  15 |       />
-  16 | 
-  17 |       <span
-  18 |         style={{
-  19 |           color: "#888",
-  20 |           marginLeft: "10px",
-  21 |         }}
-  22 |       >
-  23 |         Max: {MAX_IMAGES_PER_POINT}
-  24 |       </span>
-  25 |     </div>
-  26 |   );
-  27 | }
-  28 | 
-  29 | export default ImageCountSelector;
-  30 | 
+   8 |       {IMAGE_COUNT_OPTIONS.map((count) => (
+   9 |         <button
+  10 |           key={count}
+  11 |           className={`count-button ${imageCount === count ? "active" : ""}`}
+  12 |           onClick={() => setImageCount(count)}
+  13 |         >
+  14 |           {count}
+  15 |         </button>
+  16 |       ))}
+  17 |     </div>
+  18 |   );
+  19 | }
+  20 | 
+  21 | export default ImageCountSelector;
+  22 | 
 ```
 
 
@@ -5779,7 +5771,7 @@ imagdPlotting
 ---
 
 ## 📄 src\components\RechartsPlotter.jsx
-**hash:** `2b4754e3`
+**hash:** `f74f766`
 
 ### Chunk 1/7
 
@@ -5795,1230 +5787,1347 @@ imagdPlotting
    9 |   memo,
   10 |   useLayoutEffect,
   11 | } from "react";
-  12 | import * as d3 from "d3";
-  13 | import { usePlotterData } from "../lib/plotterData";
-  14 | import {
-  15 |   PLOT_DIMENSIONS,
-  16 |   PLOT_MARGIN,
-  17 |   DATA_POINT_LIMITS,
-  18 | } from "../lib/constants";
-  19 | import {
-  20 |   computeAdaptiveCellSize,
-  21 |   computeEffectiveImageCount,
-  22 | } from "../lib/densityLayout";
-  23 | import PlotterControls from "./PlotterControls";
-  24 | import ImageCanvasLayer from "./ImageCanvasLayer";
-  25 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
-  26 | import { useInteractionMode } from "../lib/interactionMode";
-  27 | import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
-  28 | import {
-  29 |   getChartViewport,
-  30 |   updateChartViewport,
-  31 | } from "../lib/chartViewportStore";
-  32 | import { buildQuadtree, queryVisiblePointsQuadtree } from "../lib/quadtree";
-  33 | import { useThrottledCallback } from "../lib/debouncedHooks";
-  34 | 
-  35 | const ZOOM_STEP = 1.5;
-  36 | const ZOOM_MIN = 1;
-  37 | const MIN_ZOOM_SCALE = 1.001;
-  38 | const ZOOM_MAX = 250;
-  39 | const BRUSH_MIN_PIXELS = 5;
-  40 | const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
-  41 | const BRUSH_STROKE = "#4493ff";
-  42 | const BRUSH_STROKE_WIDTH = 1.5;
-  43 | 
-  44 | const BASE_IMAGE_GAP_X = 10;
-  45 | const BASE_IMAGE_GAP_Y = 10;
-  46 | 
-  47 | const TooltipOverlay = memo(function TooltipOverlay({
-  48 |   hoveredPoint,
-  49 |   tooltipRef,
-  50 |   position,
-  51 | }) {
-  52 |   if (!hoveredPoint) return null;
-  53 | 
-  54 |   return (
-  55 |     <div
-  56 |       ref={tooltipRef}
-  57 |       style={{
-  58 |         position: "fixed",
-  59 |         left: `${position?.x ?? 0}px`,
-  60 |         top: `${position?.y ?? 0}px`,
-  61 |         background: "#111",
-  62 |         border: "1px solid #333",
-  63 |         padding: "10px",
-  64 |         borderRadius: "8px",
-  65 |         color: "white",
-  66 |         fontSize: "12px",
-  67 |         pointerEvents: "none",
-  68 |         zIndex: 1000,
-  69 |       }}
-  70 |     >
-  71 |       <div>{hoveredPoint.label}</div>
-  72 |       <div>X: {hoveredPoint.x}</div>
-  73 |       <div>Y: {hoveredPoint.y}</div>
-  74 |     </div>
-  75 |   );
-  76 | });
-  77 | 
-  78 | function createInitialDragState() {
-  79 |   return {
-  80 |     dragging: false,
-  81 |     pointerId: null,
-  82 |     startClientX: 0,
-  83 |     startClientY: 0,
-  84 |     startTransform: {
-  85 |       scale: 1,
-  86 |       x: 0,
-  87 |       y: 0,
-  88 |     },
-  89 |   };
-  90 | }
-  91 | 
-  92 | function SvgImageLayer({
-  93 |   points,
-  94 |   baseXScale,
-  95 |   baseYScale,
-  96 |   cellSize,
-  97 |   transform,
-  98 |   imageCount,
-  99 | }) {
- 100 |   return (
- 101 |     <g
- 102 |       transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}
- 103 |     >
- 104 |       {points.flatMap((point) => {
- 105 |         const x = baseXScale(point.scaledX);
- 106 |         const y = baseYScale(point.scaledY);
- 107 | 
- 108 |         return Array.from({ length: imageCount }).map((_, i) => {
- 109 |           const offsetX = (i % 3) * (cellSize * 0.3);
- 110 |           const offsetY = Math.floor(i / 3) * (cellSize * 0.3);
- 111 | 
- 112 |           return (
- 113 |             <image
- 114 |               key={`${point.id}-${i}`}
- 115 |               href={point.image}
- 116 |               x={x - cellSize / 2 + offsetX}
- 117 |               y={y - cellSize / 2 + offsetY}
- 118 |               width={cellSize}
- 119 |               height={cellSize}
- 120 |               data-point-id={point.id}
- 121 |             />
- 122 |           );
- 123 |         });
- 124 |       })}
- 125 |     </g>
- 126 |   );
- 127 | }
- 128 | 
- 129 | function RechartsPlotter({
- 130 |   enableQuadtree,
- 131 |   enableLOD,
- 132 |   enableCanvas,
- 133 |   chartId,
- 134 |   imageCount,
- 135 |   xGap,
- 136 |   yGap,
- 137 |   dataPointCount,
- 138 | }) {
- 139 |   const {
- 140 |     plotterPoints: fetchedPoints,
- 141 |     isLoading,
- 142 |     loadError,
- 143 |   } = usePlotterData();
- 144 | 
- 145 |   const syntheticPoints = useMemo(() => {
- 146 |     return generateSyntheticPoints(
- 147 |       Math.max(
- 148 |         DATA_POINT_LIMITS.min,
- 149 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
- 150 |       ),
- 151 |     );
- 152 |   }, [dataPointCount]);
- 153 | 
- 154 |   const plotterPoints = syntheticPoints || fetchedPoints;
- 155 | 
- 156 |   if (!syntheticPoints && isLoading)
- 157 |     return <div className="plotter-loading">Loading data…</div>;
- 158 |   if (!syntheticPoints && loadError)
- 159 |     return <div className="plotter-error">Error: {loadError}</div>;
+  12 | import { createPortal } from "react-dom";
+  13 | import * as d3 from "d3";
+  14 | import { usePlotterData } from "../lib/plotterData";
+  15 | import {
+  16 |   PLOT_DIMENSIONS,
+  17 |   PLOT_MARGIN,
+  18 |   DATA_POINT_LIMITS,
+  19 | } from "../lib/constants";
+  20 | import {
+  21 |   computeAdaptiveCellSize,
+  22 |   computeEffectiveImageCount,
+  23 | } from "../lib/densityLayout";
+  24 | import PlotterControls from "./PlotterControls";
+  25 | import ImageCanvasLayer from "./ImageCanvasLayer";
+  26 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+  27 | import { useInteractionMode } from "../lib/interactionMode";
+  28 | import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
+  29 | import {
+  30 |   getChartViewport,
+  31 |   updateChartViewport,
+  32 | } from "../lib/chartViewportStore";
+  33 | import { buildQuadtree, queryVisiblePointsQuadtree } from "../lib/quadtree";
+  34 | import { useThrottledCallback } from "../lib/debouncedHooks";
+  35 | import { computeImagePositions } from "../lib/gridLayout";
+  36 | 
+  37 | const ZOOM_STEP = 1.5;
+  38 | const ZOOM_EPS = 0.001;
+  39 | const ZOOM_MAX = 250;
+  40 | const BRUSH_MIN_PIXELS = 5;
+  41 | const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
+  42 | const BRUSH_STROKE = "#4493ff";
+  43 | const BRUSH_STROKE_WIDTH = 1.5;
+  44 | 
+  45 | const BASE_IMAGE_GAP_X = 10;
+  46 | const BASE_IMAGE_GAP_Y = 10;
+  47 | 
+  48 | const TooltipOverlay = memo(function TooltipOverlay({
+  49 |   hoveredPoint,
+  50 |   tooltipRef,
+  51 |   position,
+  52 | }) {
+  53 |   if (!hoveredPoint) return null;
+  54 |   if (typeof document === "undefined") return null;
+  55 | 
+  56 |   return createPortal(
+  57 |     <div
+  58 |       ref={tooltipRef}
+  59 |       style={{
+  60 |         position: "fixed",
+  61 |         left: `${position?.x ?? 0}px`,
+  62 |         top: `${position?.y ?? 0}px`,
+  63 |         background: "#111",
+  64 |         border: "1px solid #333",
+  65 |         padding: "10px",
+  66 |         borderRadius: "8px",
+  67 |         color: "white",
+  68 |         fontSize: "12px",
+  69 |         pointerEvents: "none",
+  70 |         zIndex: 1000,
+  71 |       }}
+  72 |     >
+  73 |       <div>{hoveredPoint.label}</div>
+  74 |       <div>X: {hoveredPoint.x}</div>
+  75 |       <div>Y: {hoveredPoint.y}</div>
+  76 |     </div>,
+  77 |     document.body,
+  78 |   );
+  79 | });
+  80 | 
+  81 | function createInitialDragState() {
+  82 |   return {
+  83 |     dragging: false,
+  84 |     pointerId: null,
+  85 |     startClientX: 0,
+  86 |     startClientY: 0,
+  87 |     startTransform: {
+  88 |       scale: 1,
+  89 |       x: 0,
+  90 |       y: 0,
+  91 |     },
+  92 |   };
+  93 | }
+  94 | 
+  95 | function SvgImageLayer({
+  96 |   points,
+  97 |   baseXScale,
+  98 |   baseYScale,
+  99 |   cellSize,
+ 100 |   transform,
+ 101 |   imageCount,
+ 102 | }) {
+ 103 |   return (
+ 104 |     <g
+ 105 |       transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}
+ 106 |     >
+ 107 |       {points.flatMap((point) => {
+ 108 |         const centerX = baseXScale(point.scaledX);
+ 109 |         const centerY = baseYScale(point.scaledY);
+ 110 | 
+ 111 |         const positions = computeImagePositions(
+ 112 |           centerX,
+ 113 |           centerY,
+ 114 |           cellSize,
+ 115 |           cellSize,
+ 116 |           imageCount,
+ 117 |         );
+ 118 | 
+ 119 |         return positions.map((pos) => (
+ 120 |           <image
+ 121 |             key={`${point.id}-${pos.imageIndex}`}
+ 122 |             href={point.image}
+ 123 |             x={pos.x}
+ 124 |             y={pos.y}
+ 125 |             width={pos.width}
+ 126 |             height={pos.height}
+ 127 |             preserveAspectRatio="none"
+ 128 |             data-point-id={point.id}
+ 129 |           />
+ 130 |         ));
+ 131 |       })}
+ 132 |     </g>
+ 133 |   );
+ 134 | }
+ 135 | 
+ 136 | function RechartsPlotter({
+ 137 |   enableQuadtree,
+ 138 |   enableLOD,
+ 139 |   enableCanvas,
+ 140 |   chartId,
+ 141 |   imageCount,
+ 142 |   xGap,
+ 143 |   yGap,
+ 144 |   dataPointCount,
+ 145 | }) {
+ 146 |   const {
+ 147 |     plotterPoints: fetchedPoints,
+ 148 |     isLoading,
+ 149 |     loadError,
+ 150 |   } = usePlotterData();
+ 151 | 
+ 152 |   const syntheticPoints = useMemo(() => {
+ 153 |     return generateSyntheticPoints(
+ 154 |       Math.max(
+ 155 |         DATA_POINT_LIMITS.min,
+ 156 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
+ 157 |       ),
+ 158 |     );
+ 159 |   }, [dataPointCount]);
  160 | 
- 161 |   return (
- 162 |     <RechartsCanvas
- 163 |       plotterPoints={plotterPoints}
- 164 |       imageCount={imageCount}
- 165 |       xGap={xGap}
- 166 |       yGap={yGap}
- 167 |       chartId={chartId}
- 168 |       enableQuadtree={enableQuadtree}
- 169 |       enableLOD={enableLOD}
- 170 |       enableCanvas={enableCanvas}
- 171 |     />
- 172 |   );
- 173 | }
- 174 | 
- 175 | const ControlsLayer = memo(function ControlsLayer({
- 176 |   zoomLevel,
- 177 |   onZoomIn,
- 178 |   onZoomOut,
- 179 |   onReset,
- 180 |   interactionMode,
- 181 |   onModeChange,
- 182 | }) {
- 183 |   return (
- 184 |     <div style={{ position: "absolute", top: 0, left: 0, zIndex: 10 }}>
- 185 |       <PlotterControls
- 186 |         zoomLevel={zoomLevel}
- 187 |         onZoomIn={onZoomIn}
- 188 |         onZoomOut={onZoomOut}
- 189 |         onReset={onReset}
- 190 |         interactionMode={interactionMode}
- 191 |         onModeChange={onModeChange}
- 192 |       />
- 193 |     </div>
- 194 |   );
- 195 | });
- 196 | 
- 197 | function RechartsCanvas({
- 198 |   plotterPoints,
- 199 |   imageCount,
- 200 |   xGap,
+ 161 |   const plotterPoints = syntheticPoints || fetchedPoints;
+ 162 | 
+ 163 |   if (!syntheticPoints && isLoading)
+ 164 |     return <div className="plotter-loading">Loading data…</div>;
+ 165 |   if (!syntheticPoints && loadError)
+ 166 |     return <div className="plotter-error">Error: {loadError}</div>;
+ 167 | 
+ 168 |   return (
+ 169 |     <RechartsCanvas
+ 170 |       plotterPoints={plotterPoints}
+ 171 |       imageCount={imageCount}
+ 172 |       xGap={xGap}
+ 173 |       yGap={yGap}
+ 174 |       chartId={chartId}
+ 175 |       enableQuadtree={enableQuadtree}
+ 176 |       enableLOD={enableLOD}
+ 177 |       enableCanvas={enableCanvas}
+ 178 |     />
+ 179 |   );
+ 180 | }
+ 181 | 
+ 182 | const ControlsLayer = memo(function ControlsLayer({
+ 183 |   zoomLevel,
+ 184 |   onZoomIn,
+ 185 |   onZoomOut,
+ 186 |   onReset,
+ 187 |   interactionMode,
+ 188 |   onModeChange,
+ 189 | }) {
+ 190 |   return (
+ 191 |     <div style={{ position: "relative", zIndex: 10, marginBottom: 12 }}>
+ 192 |       <PlotterControls
+ 193 |         zoomLevel={zoomLevel}
+ 194 |         onZoomIn={onZoomIn}
+ 195 |         onZoomOut={onZoomOut}
+ 196 |         onReset={onReset}
+ 197 |         interactionMode={interactionMode}
+ 198 |         onModeChange={onModeChange}
+ 199 |       />
+ 200 |     </div>
 ```
 
 ### Chunk 2/7
 
 ```jsx
- 201 |   yGap,
- 202 |   chartId,
- 203 |   enableQuadtree,
- 204 |   enableLOD,
- 205 |   enableCanvas,
- 206 | }) {
- 207 |   const containerRef = useRef(null);
- 208 |   const svgRef = useRef(null);
- 209 |   const rafIdRef = useRef(null);
- 210 |   const dragRef = useRef(createInitialDragState());
- 211 |   const cachedScalesRef = useRef({ key: null, xScale: null, yScale: null });
- 212 |   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
- 213 |   const initialViewportRef = useRef(getChartViewport(chartId));
- 214 | 
- 215 |   const initialScale = Math.max(
- 216 |     initialViewportRef.current.scale || 1,
- 217 |     ZOOM_MIN,
- 218 |   );
- 219 | 
- 220 |   const [transform, setTransform] = useState(() =>
- 221 |     initialScale <= MIN_ZOOM_SCALE
- 222 |       ? {
- 223 |           scale: 1,
- 224 |           x: 0,
- 225 |           y: 0,
- 226 |         }
- 227 |       : {
- 228 |           scale: initialScale,
- 229 |           x: initialViewportRef.current.translateX || 0,
- 230 |           y: initialViewportRef.current.translateY || 0,
- 231 |         },
- 232 |   );
- 233 |   const [hoveredPoint, setHoveredPoint] = useState(null);
- 234 |   const tooltipRef = useRef(null);
- 235 |   const [brushRect, setBrushRect] = useState(null);
- 236 |   const [isDragging, setIsDragging] = useState(false);
- 237 |   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
- 238 |   const brushStartRef = useRef(null);
- 239 |   const pendingTransformRef = useRef(null);
- 240 |   const { interactionMode, setInteractionMode, isPanMode } =
- 241 |     useInteractionMode();
- 242 | 
- 243 |   useEffect(() => {
- 244 |     if (!containerRef.current) return;
- 245 | 
- 246 |     const observer = new ResizeObserver((entries) => {
- 247 |       const entry = entries[0];
- 248 |       if (entry) setContainerWidth(entry.contentRect.width);
- 249 |     });
- 250 | 
- 251 |     observer.observe(containerRef.current);
- 252 |     return () => observer.disconnect();
- 253 |   }, []);
- 254 | 
- 255 |   useEffect(() => {
- 256 |     if (isPanMode) {
- 257 |       brushStartRef.current = null;
- 258 |       setBrushRect(null);
- 259 |     }
- 260 |   }, [isPanMode]);
- 261 | 
- 262 |   useEffect(() => {
- 263 |     updateChartViewport(chartId, {
- 264 |       scale: transform.scale,
- 265 |       translateX: transform.x,
- 266 |       translateY: transform.y,
- 267 |     });
- 268 |   }, [chartId, transform]);
- 269 | 
- 270 |   useLayoutEffect(() => {
- 271 |     const saved = getChartViewport(chartId);
- 272 |     const savedScale = Math.max(saved?.scale ?? 1, ZOOM_MIN);
- 273 | 
- 274 |     setTransform(
- 275 |       savedScale <= MIN_ZOOM_SCALE
- 276 |         ? {
- 277 |             scale: 1,
- 278 |             x: 0,
- 279 |             y: 0,
- 280 |           }
- 281 |         : {
- 282 |             scale: savedScale,
- 283 |             x: saved?.translateX ?? 0,
- 284 |             y: saved?.translateY ?? 0,
- 285 |           },
- 286 |     );
- 287 |   }, [chartId]);
- 288 | 
- 289 |   const height = PLOT_DIMENSIONS.height;
- 290 |   const innerWidth = Math.max(
- 291 |     containerWidth - PLOT_MARGIN.left - PLOT_MARGIN.right,
- 292 |     320,
- 293 |   );
- 294 |   const innerHeight = Math.max(
- 295 |     height - PLOT_MARGIN.top - PLOT_MARGIN.bottom,
- 296 |     240,
- 297 |   );
- 298 | 
- 299 |   const normalizedPoints = useMemo(() => {
- 300 |     const xScale = xGap / BASE_IMAGE_GAP_X;
- 301 |     const yScale = yGap / BASE_IMAGE_GAP_Y;
- 302 | 
- 303 |     return plotterPoints.map((point) => ({
- 304 |       id: point.id,
- 305 |       x: point.x,
- 306 |       y: point.y,
- 307 |       scaledX: point.x * xScale,
- 308 |       scaledY: point.y * yScale,
- 309 |       image: point.image,
- 310 |       label: point.label,
- 311 |       meta: point.meta,
- 312 |     }));
- 313 |   }, [plotterPoints, xGap, yGap]);
- 314 | 
- 315 |   const xExtent = useMemo(
- 316 |     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledX),
- 317 |     [normalizedPoints],
- 318 |   );
- 319 | 
- 320 |   const yExtent = useMemo(
- 321 |     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledY),
- 322 |     [normalizedPoints],
- 323 |   );
- 324 | 
- 325 |   const { baseXScale, baseYScale } = useMemo(() => {
- 326 |     const scaleKey = `${xExtent[0]}-${xExtent[1]}-${yExtent[0]}-${yExtent[1]}-${innerWidth}-${innerHeight}`;
- 327 | 
- 328 |     if (
- 329 |       cachedScalesRef.current.key === scaleKey &&
- 330 |       cachedScalesRef.current.xScale &&
- 331 |       cachedScalesRef.current.yScale
- 332 |     ) {
- 333 |       return {
- 334 |         baseXScale: cachedScalesRef.current.xScale,
- 335 |         baseYScale: cachedScalesRef.current.yScale,
- 336 |       };
- 337 |     }
+ 201 |   );
+ 202 | });
+ 203 | 
+ 204 | function RechartsCanvas({
+ 205 |   plotterPoints,
+ 206 |   imageCount,
+ 207 |   xGap,
+ 208 |   yGap,
+ 209 |   chartId,
+ 210 |   enableQuadtree,
+ 211 |   enableLOD,
+ 212 |   enableCanvas,
+ 213 | }) {
+ 214 |   const containerRef = useRef(null);
+ 215 |   const svgRef = useRef(null);
+ 216 |   const rafIdRef = useRef(null);
+ 217 |   const dragRef = useRef(createInitialDragState());
+ 218 |   const cachedScalesRef = useRef({ key: null, xScale: null, yScale: null });
+ 219 |   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
+ 220 |   const initialViewportRef = useRef(getChartViewport(chartId));
+ 221 | 
+ 222 |   const [transform, setTransform] = useState(() => ({
+ 223 |     scale: initialViewportRef.current.scale || 1,
+ 224 |     x: initialViewportRef.current.translateX || 0,
+ 225 |     y: initialViewportRef.current.translateY || 0,
+ 226 |   }));
+ 227 |   const [hoveredPoint, setHoveredPoint] = useState(null);
+ 228 |   const tooltipRef = useRef(null);
+ 229 |   const [brushRect, setBrushRect] = useState(null);
+ 230 |   const [isDragging, setIsDragging] = useState(false);
+ 231 |   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+ 232 |   const brushStartRef = useRef(null);
+ 233 |   const pendingTransformRef = useRef(null);
+ 234 |   const { interactionMode, setInteractionMode, isPanMode } =
+ 235 |     useInteractionMode();
+ 236 | 
+ 237 |   useEffect(() => {
+ 238 |     if (!containerRef.current) return;
+ 239 | 
+ 240 |     const observer = new ResizeObserver((entries) => {
+ 241 |       const entry = entries[0];
+ 242 |       if (entry) setContainerWidth(entry.contentRect.width);
+ 243 |     });
+ 244 | 
+ 245 |     observer.observe(containerRef.current);
+ 246 |     return () => observer.disconnect();
+ 247 |   }, []);
+ 248 | 
+ 249 |   useEffect(() => {
+ 250 |     if (isPanMode) {
+ 251 |       brushStartRef.current = null;
+ 252 |       setBrushRect(null);
+ 253 |     }
+ 254 |   }, [isPanMode]);
+ 255 | 
+ 256 |   useEffect(() => {
+ 257 |     updateChartViewport(chartId, {
+ 258 |       scale: transform.scale,
+ 259 |       translateX: transform.x,
+ 260 |       translateY: transform.y,
+ 261 |     });
+ 262 |   }, [chartId, transform]);
+ 263 | 
+ 264 |   useLayoutEffect(() => {
+ 265 |     const saved = getChartViewport(chartId);
+ 266 |     setTransform({
+ 267 |       scale: saved?.scale ?? 1,
+ 268 |       x: saved?.translateX ?? 0,
+ 269 |       y: saved?.translateY ?? 0,
+ 270 |     });
+ 271 |   }, [chartId]);
+ 272 | 
+ 273 |   const height = PLOT_DIMENSIONS.height;
+ 274 |   const innerWidth = Math.max(
+ 275 |     containerWidth - PLOT_MARGIN.left - PLOT_MARGIN.right,
+ 276 |     320,
+ 277 |   );
+ 278 |   const innerHeight = Math.max(
+ 279 |     height - PLOT_MARGIN.top - PLOT_MARGIN.bottom,
+ 280 |     240,
+ 281 |   );
+ 282 | 
+ 283 |   // Gap spreads images apart: the content box grows with the gap (matching the
+ 284 |   // D3 plotter's range model), while the viewport stays innerWidth/innerHeight.
+ 285 |   const xSpacingScale = xGap / BASE_IMAGE_GAP_X;
+ 286 |   const ySpacingScale = yGap / BASE_IMAGE_GAP_Y;
+ 287 |   const contentWidth = innerWidth * xSpacingScale;
+ 288 |   const contentHeight = innerHeight * ySpacingScale;
+ 289 | 
+ 290 |   // The scale at which the whole content fits inside the viewport. No cap: if
+ 291 |   // content is larger than the viewport we zoom out to fit, and if it is
+ 292 |   // smaller we zoom in so it fills the viewport ("contain" behaviour).
+ 293 |   const fitScale = Math.min(
+ 294 |     innerWidth / contentWidth,
+ 295 |     innerHeight / contentHeight,
+ 296 |   );
+ 297 | 
+ 298 |   // The "home"/reset view: fully fitted and centered.
+ 299 |   const homeTransform = useMemo(
+ 300 |     () =>
+ 301 |       clampTransform(
+ 302 |         { scale: fitScale, x: 0, y: 0 },
+ 303 |         contentWidth,
+ 304 |         contentHeight,
+ 305 |         innerWidth,
+ 306 |         innerHeight,
+ 307 |       ),
+ 308 |     [fitScale, contentWidth, contentHeight, innerWidth, innerHeight],
+ 309 |   );
+ 310 | 
+ 311 |   // Whenever the content box or viewport changes (gap update, resize), pull the
+ 312 |   // current transform back into the valid range and re-clamp its position.
+ 313 |   useEffect(() => {
+ 314 |     setTransform((prev) => {
+ 315 |       const scale = clamp(prev.scale, fitScale, ZOOM_MAX);
+ 316 |       return clampTransform(
+ 317 |         { scale, x: prev.x, y: prev.y },
+ 318 |         contentWidth,
+ 319 |         contentHeight,
+ 320 |         innerWidth,
+ 321 |         innerHeight,
+ 322 |       );
+ 323 |     });
+ 324 |   }, [fitScale, contentWidth, contentHeight, innerWidth, innerHeight]);
+ 325 | 
+ 326 |   const normalizedPoints = useMemo(() => {
+ 327 |     return plotterPoints.map((point) => ({
+ 328 |       id: point.id,
+ 329 |       x: point.x,
+ 330 |       y: point.y,
+ 331 |       scaledX: point.x,
+ 332 |       scaledY: point.y,
+ 333 |       image: point.image,
+ 334 |       label: point.label,
+ 335 |       meta: point.meta,
+ 336 |     }));
+ 337 |   }, [plotterPoints]);
  338 | 
- 339 |     const xScale = d3.scaleLinear().domain(xExtent).range([0, innerWidth]);
- 340 |     const yScale = d3.scaleLinear().domain(yExtent).range([innerHeight, 0]);
- 341 | 
- 342 |     cachedScalesRef.current = { key: scaleKey, xScale, yScale };
- 343 |     return { baseXScale: xScale, baseYScale: yScale };
- 344 |   }, [xExtent, yExtent, innerWidth, innerHeight]);
- 345 | 
- 346 |   const quadtree = useMemo(() => {
- 347 |     if (!normalizedPoints.length) return null;
- 348 |     return buildQuadtree(normalizedPoints);
- 349 |   }, [normalizedPoints]);
- 350 | 
- 351 |   const viewportCulledPoints = useMemo(() => {
- 352 |     if (!quadtree || normalizedPoints.length === 0) {
- 353 |       return normalizedPoints;
- 354 |     }
- 355 | 
- 356 |     const xMinPx = (0 - transform.x) / transform.scale;
- 357 |     const xMaxPx = (innerWidth - transform.x) / transform.scale;
- 358 | 
- 359 |     const yMaxPx = (0 - transform.y) / transform.scale;
- 360 |     const yMinPx = (innerHeight - transform.y) / transform.scale;
- 361 | 
- 362 |     const xMin = baseXScale.invert(xMinPx);
- 363 |     const xMax = baseXScale.invert(xMaxPx);
- 364 | 
- 365 |     const yMin = baseYScale.invert(yMinPx);
- 366 |     const yMax = baseYScale.invert(yMaxPx);
- 367 | 
- 368 |     const result = queryVisiblePointsQuadtree(
- 369 |       quadtree,
- 370 |       { xMin, xMax, yMin, yMax },
- 371 |       0,
- 372 |     );
- 373 | 
- 374 |     return Array.isArray(result) && result.length ? result : normalizedPoints;
- 375 |   }, [
- 376 |     quadtree,
- 377 |     normalizedPoints,
- 378 |     transform.x,
- 379 |     transform.scale,
- 380 |     transform.y,
- 381 |     innerWidth,
- 382 |     innerHeight,
- 383 |     baseXScale,
- 384 |     baseYScale,
- 385 |   ]);
- 386 | 
- 387 |   const visibleDomain = useMemo(
- 388 |     () =>
- 389 |       computeVisibleDomain(
- 390 |         xExtent,
- 391 |         yExtent,
- 392 |         transform,
- 393 |         innerWidth,
- 394 |         innerHeight,
- 395 |       ),
- 396 |     [xExtent, yExtent, innerWidth, innerHeight, transform],
- 397 |   );
- 398 | 
- 399 |   const xTicks = useMemo(() => {
- 400 |     return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8);
+ 339 |   const xExtent = useMemo(
+ 340 |     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledX),
+ 341 |     [normalizedPoints],
+ 342 |   );
+ 343 | 
+ 344 |   const yExtent = useMemo(
+ 345 |     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledY),
+ 346 |     [normalizedPoints],
+ 347 |   );
+ 348 | 
+ 349 |   const { baseXScale, baseYScale } = useMemo(() => {
+ 350 |     const scaleKey = `${xExtent[0]}-${xExtent[1]}-${yExtent[0]}-${yExtent[1]}-${contentWidth}-${contentHeight}`;
+ 351 | 
+ 352 |     if (
+ 353 |       cachedScalesRef.current.key === scaleKey &&
+ 354 |       cachedScalesRef.current.xScale &&
+ 355 |       cachedScalesRef.current.yScale
+ 356 |     ) {
+ 357 |       return {
+ 358 |         baseXScale: cachedScalesRef.current.xScale,
+ 359 |         baseYScale: cachedScalesRef.current.yScale,
+ 360 |       };
+ 361 |     }
+ 362 | 
+ 363 |     const xScale = d3.scaleLinear().domain(xExtent).range([0, contentWidth]);
+ 364 |     const yScale = d3.scaleLinear().domain(yExtent).range([contentHeight, 0]);
+ 365 | 
+ 366 |     cachedScalesRef.current = { key: scaleKey, xScale, yScale };
+ 367 |     return { baseXScale: xScale, baseYScale: yScale };
+ 368 |   }, [xExtent, yExtent, contentWidth, contentHeight]);
+ 369 | 
+ 370 |   const quadtree = useMemo(() => {
+ 371 |     if (!normalizedPoints.length) return null;
+ 372 |     return buildQuadtree(normalizedPoints);
+ 373 |   }, [normalizedPoints]);
+ 374 | 
+ 375 |   const viewportCulledPoints = useMemo(() => {
+ 376 |     if (!quadtree || normalizedPoints.length === 0) {
+ 377 |       return normalizedPoints;
+ 378 |     }
+ 379 | 
+ 380 |     const xMinPx = (0 - transform.x) / transform.scale;
+ 381 |     const xMaxPx = (innerWidth - transform.x) / transform.scale;
+ 382 | 
+ 383 |     const yMaxPx = (0 - transform.y) / transform.scale;
+ 384 |     const yMinPx = (innerHeight - transform.y) / transform.scale;
+ 385 | 
+ 386 |     const xMin = baseXScale.invert(xMinPx);
+ 387 |     const xMax = baseXScale.invert(xMaxPx);
+ 388 | 
+ 389 |     const yMin = baseYScale.invert(yMinPx);
+ 390 |     const yMax = baseYScale.invert(yMaxPx);
+ 391 | 
+ 392 |     const result = queryVisiblePointsQuadtree(
+ 393 |       quadtree,
+ 394 |       { xMin, xMax, yMin, yMax },
+ 395 |       0,
+ 396 |     );
+ 397 | 
+ 398 |     return Array.isArray(result) && result.length ? result : normalizedPoints;
+ 399 |   }, [
+ 400 |     quadtree,
 ```
 
 ### Chunk 3/7
 
 ```jsx
- 401 |   }, [visibleDomain.xMin, visibleDomain.xMax]);
- 402 | 
- 403 |   const yTicks = useMemo(() => {
- 404 |     return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6);
- 405 |   }, [visibleDomain.yMin, visibleDomain.yMax]);
- 406 | 
- 407 |   const xTickScale = useMemo(() => {
- 408 |     const scale = d3.scaleLinear();
- 409 |     scale.domain([visibleDomain.xMin, visibleDomain.xMax]);
- 410 |     scale.range([0, innerWidth]);
- 411 |     return scale;
- 412 |   }, [visibleDomain.xMin, visibleDomain.xMax, innerWidth]);
- 413 | 
- 414 |   const yTickScale = useMemo(() => {
- 415 |     const scale = d3.scaleLinear();
- 416 |     scale.domain([visibleDomain.yMin, visibleDomain.yMax]);
- 417 |     scale.range([innerHeight, 0]);
- 418 |     return scale;
- 419 |   }, [visibleDomain.yMin, visibleDomain.yMax, innerHeight]);
- 420 | 
- 421 |   const axisProps = useMemo(
- 422 |     () => ({
- 423 |       xTicks,
- 424 |       yTicks,
- 425 |       xTickScale,
- 426 |       yTickScale,
- 427 |       innerWidth,
- 428 |       innerHeight,
- 429 |     }),
- 430 |     [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight],
+ 401 |     normalizedPoints,
+ 402 |     transform.x,
+ 403 |     transform.scale,
+ 404 |     transform.y,
+ 405 |     innerWidth,
+ 406 |     innerHeight,
+ 407 |     baseXScale,
+ 408 |     baseYScale,
+ 409 |   ]);
+ 410 | 
+ 411 |   const visibleDomain = useMemo(
+ 412 |     () =>
+ 413 |       computeVisibleDomain(
+ 414 |         xExtent,
+ 415 |         yExtent,
+ 416 |         transform,
+ 417 |         contentWidth,
+ 418 |         contentHeight,
+ 419 |         innerWidth,
+ 420 |         innerHeight,
+ 421 |       ),
+ 422 |     [
+ 423 |       xExtent,
+ 424 |       yExtent,
+ 425 |       transform,
+ 426 |       contentWidth,
+ 427 |       contentHeight,
+ 428 |       innerWidth,
+ 429 |       innerHeight,
+ 430 |     ],
  431 |   );
  432 | 
- 433 |   const clipId = useMemo(
- 434 |     () => `recharts-clip-${String(chartId).replace(/[^a-zA-Z0-9_-]/g, "")}`,
- 435 |     [chartId],
- 436 |   );
- 437 | 
- 438 |   const adaptiveCellSizeForRender = useMemo(() => {
- 439 |     return computeAdaptiveCellSize(
- 440 |       normalizedPoints,
- 441 |       (val) => baseXScale(val),
- 442 |       (val) => baseYScale(val),
- 443 |     );
- 444 |   }, [normalizedPoints, baseXScale, baseYScale]);
- 445 | 
- 446 |   const visiblePointsForRender = useMemo(() => {
- 447 |     if (!enableQuadtree) {
- 448 |       return normalizedPoints;
- 449 |     }
- 450 |     return viewportCulledPoints;
- 451 |   }, [enableQuadtree, normalizedPoints, viewportCulledPoints]);
- 452 | 
- 453 |   const renderStats = useMemo(() => {
- 454 |     const totalPoints = plotterPoints.length;
- 455 |     const viewportCulledCount = Math.max(
- 456 |       0,
- 457 |       totalPoints - viewportCulledPoints.length,
- 458 |     );
- 459 |     const renderCulledCount = Math.max(
- 460 |       0,
- 461 |       viewportCulledPoints.length - visiblePointsForRender.length,
- 462 |     );
- 463 |     const totalCulledCount = Math.max(
- 464 |       0,
- 465 |       totalPoints - visiblePointsForRender.length,
- 466 |     );
- 467 | 
- 468 |     return {
- 469 |       chartId,
- 470 |       totalPoints,
- 471 |       afterViewportCulling: viewportCulledPoints.length,
- 472 |       renderedPoints: visiblePointsForRender.length,
- 473 |       viewportCulledCount,
- 474 |       renderCulledCount,
- 475 |       totalCulledCount,
- 476 |       zoomScale: Number(transform.scale.toFixed(3)),
- 477 |     };
- 478 |   }, [
- 479 |     chartId,
- 480 |     plotterPoints.length,
- 481 |     viewportCulledPoints.length,
- 482 |     visiblePointsForRender.length,
- 483 |     transform.scale,
- 484 |   ]);
- 485 | 
- 486 |   const effectiveImageCountForRender = useMemo(() => {
- 487 |     if (!enableLOD) {
- 488 |       return imageCount;
- 489 |     }
- 490 | 
- 491 |     return Math.max(
- 492 |       1,
- 493 |       computeEffectiveImageCount(
- 494 |         adaptiveCellSizeForRender * transform.scale,
- 495 |         imageCount,
- 496 |       ),
- 497 |     );
- 498 |   }, [enableLOD, adaptiveCellSizeForRender, transform.scale, imageCount]);
- 499 | 
- 500 |   const throttledTransformUpdate = useThrottledCallback(
- 501 |     (nextTransform) => setTransform(nextTransform),
- 502 |     16,
- 503 |   );
- 504 | 
- 505 |   const scheduleTransformUpdate = useCallback(
- 506 |     (nextTransform) => {
- 507 |       pendingTransformRef.current = nextTransform;
- 508 | 
- 509 |       if (rafIdRef.current) return;
- 510 | 
- 511 |       rafIdRef.current = requestAnimationFrame(() => {
- 512 |         rafIdRef.current = null;
- 513 | 
- 514 |         if (pendingTransformRef.current) {
- 515 |           throttledTransformUpdate(pendingTransformRef.current);
- 516 |           pendingTransformRef.current = null;
- 517 |         }
- 518 |       });
- 519 |     },
- 520 |     [throttledTransformUpdate],
- 521 |   );
- 522 | 
- 523 |   const zoomTo = useCallback(
- 524 |     (nextScale, anchorX, anchorY) => {
- 525 |       setTransform((prev) => {
- 526 |         const clampedScale = clamp(nextScale, ZOOM_MIN, ZOOM_MAX);
- 527 | 
- 528 |         if (clampedScale <= MIN_ZOOM_SCALE) {
- 529 |           return { scale: 1, x: 0, y: 0 };
- 530 |         }
- 531 | 
- 532 |         const pivotX = Number.isFinite(anchorX) ? anchorX : innerWidth / 2;
- 533 |         const pivotY = Number.isFinite(anchorY) ? anchorY : innerHeight / 2;
- 534 | 
- 535 |         const nextX =
- 536 |           prev.x - (pivotX - prev.x) * (clampedScale / prev.scale - 1);
- 537 |         const nextY =
- 538 |           prev.y - (pivotY - prev.y) * (clampedScale / prev.scale - 1);
- 539 | 
- 540 |         return clampTransform(
- 541 |           { scale: clampedScale, x: nextX, y: nextY },
- 542 |           innerWidth,
- 543 |           innerHeight,
- 544 |         );
- 545 |       });
- 546 |     },
- 547 |     [innerWidth, innerHeight],
- 548 |   );
- 549 | 
- 550 |   const pointMap = useMemo(() => {
- 551 |     const map = new Map();
- 552 | 
- 553 |     for (const point of visiblePointsForRender) {
- 554 |       map.set(String(point.id), point);
- 555 |     }
+ 433 |   const xTicks = useMemo(() => {
+ 434 |     return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8);
+ 435 |   }, [visibleDomain.xMin, visibleDomain.xMax]);
+ 436 | 
+ 437 |   const yTicks = useMemo(() => {
+ 438 |     return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6);
+ 439 |   }, [visibleDomain.yMin, visibleDomain.yMax]);
+ 440 | 
+ 441 |   const xTickScale = useMemo(() => {
+ 442 |     const scale = d3.scaleLinear();
+ 443 |     scale.domain([visibleDomain.xMin, visibleDomain.xMax]);
+ 444 |     scale.range([0, innerWidth]);
+ 445 |     return scale;
+ 446 |   }, [visibleDomain.xMin, visibleDomain.xMax, innerWidth]);
+ 447 | 
+ 448 |   const yTickScale = useMemo(() => {
+ 449 |     const scale = d3.scaleLinear();
+ 450 |     scale.domain([visibleDomain.yMin, visibleDomain.yMax]);
+ 451 |     scale.range([innerHeight, 0]);
+ 452 |     return scale;
+ 453 |   }, [visibleDomain.yMin, visibleDomain.yMax, innerHeight]);
+ 454 | 
+ 455 |   const axisProps = useMemo(
+ 456 |     () => ({
+ 457 |       xTicks,
+ 458 |       yTicks,
+ 459 |       xTickScale,
+ 460 |       yTickScale,
+ 461 |       innerWidth,
+ 462 |       innerHeight,
+ 463 |     }),
+ 464 |     [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight],
+ 465 |   );
+ 466 | 
+ 467 |   const clipId = useMemo(
+ 468 |     () => `recharts-clip-${String(chartId).replace(/[^a-zA-Z0-9_-]/g, "")}`,
+ 469 |     [chartId],
+ 470 |   );
+ 471 | 
+ 472 |   const adaptiveCellSizeForRender = useMemo(() => {
+ 473 |     return computeAdaptiveCellSize(
+ 474 |       normalizedPoints,
+ 475 |       (val) => baseXScale(val),
+ 476 |       (val) => baseYScale(val),
+ 477 |     );
+ 478 |   }, [normalizedPoints, baseXScale, baseYScale]);
+ 479 | 
+ 480 |   const visiblePointsForRender = useMemo(() => {
+ 481 |     if (!enableQuadtree) {
+ 482 |       return normalizedPoints;
+ 483 |     }
+ 484 |     return viewportCulledPoints;
+ 485 |   }, [enableQuadtree, normalizedPoints, viewportCulledPoints]);
+ 486 | 
+ 487 |   const renderStats = useMemo(() => {
+ 488 |     const totalPoints = plotterPoints.length;
+ 489 |     const viewportCulledCount = Math.max(
+ 490 |       0,
+ 491 |       totalPoints - viewportCulledPoints.length,
+ 492 |     );
+ 493 |     const renderCulledCount = Math.max(
+ 494 |       0,
+ 495 |       viewportCulledPoints.length - visiblePointsForRender.length,
+ 496 |     );
+ 497 |     const totalCulledCount = Math.max(
+ 498 |       0,
+ 499 |       totalPoints - visiblePointsForRender.length,
+ 500 |     );
+ 501 | 
+ 502 |     return {
+ 503 |       chartId,
+ 504 |       totalPoints,
+ 505 |       afterViewportCulling: viewportCulledPoints.length,
+ 506 |       renderedPoints: visiblePointsForRender.length,
+ 507 |       viewportCulledCount,
+ 508 |       renderCulledCount,
+ 509 |       totalCulledCount,
+ 510 |       zoomScale: Number(transform.scale.toFixed(3)),
+ 511 |     };
+ 512 |   }, [
+ 513 |     chartId,
+ 514 |     plotterPoints.length,
+ 515 |     viewportCulledPoints.length,
+ 516 |     visiblePointsForRender.length,
+ 517 |     transform.scale,
+ 518 |   ]);
+ 519 | 
+ 520 |   const effectiveImageCountForRender = useMemo(() => {
+ 521 |     if (!enableLOD) {
+ 522 |       return imageCount;
+ 523 |     }
+ 524 | 
+ 525 |     return Math.max(
+ 526 |       1,
+ 527 |       computeEffectiveImageCount(
+ 528 |         adaptiveCellSizeForRender * transform.scale,
+ 529 |         imageCount,
+ 530 |       ),
+ 531 |     );
+ 532 |   }, [enableLOD, adaptiveCellSizeForRender, transform.scale, imageCount]);
+ 533 | 
+ 534 |   const throttledTransformUpdate = useThrottledCallback(
+ 535 |     (nextTransform) => setTransform(nextTransform),
+ 536 |     16,
+ 537 |   );
+ 538 | 
+ 539 |   const scheduleTransformUpdate = useCallback(
+ 540 |     (nextTransform) => {
+ 541 |       pendingTransformRef.current = nextTransform;
+ 542 | 
+ 543 |       if (rafIdRef.current) return;
+ 544 | 
+ 545 |       rafIdRef.current = requestAnimationFrame(() => {
+ 546 |         rafIdRef.current = null;
+ 547 | 
+ 548 |         if (pendingTransformRef.current) {
+ 549 |           throttledTransformUpdate(pendingTransformRef.current);
+ 550 |           pendingTransformRef.current = null;
+ 551 |         }
+ 552 |       });
+ 553 |     },
+ 554 |     [throttledTransformUpdate],
+ 555 |   );
  556 | 
- 557 |     return map;
- 558 |   }, [visiblePointsForRender]);
- 559 | 
- 560 |   const handleZoomIn = useCallback(() => {
- 561 |     logChartInteractionEvent({
- 562 |       interactionType: "ZOOM_IN",
- 563 |       visualizationLibrary: "Recharts",
- 564 |       interactionSource: "button",
- 565 |     });
- 566 |     zoomTo(transform.scale * ZOOM_STEP, innerWidth / 2, innerHeight / 2);
- 567 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
- 568 | 
- 569 |   const handleZoomOut = useCallback(() => {
- 570 |     if (transform.scale <= MIN_ZOOM_SCALE) {
- 571 |       return;
- 572 |     }
- 573 | 
- 574 |     logChartInteractionEvent({
- 575 |       interactionType: "ZOOM_OUT",
- 576 |       visualizationLibrary: "Recharts",
- 577 |       interactionSource: "button",
- 578 |     });
- 579 | 
- 580 |     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
- 581 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
- 582 | 
- 583 |   const handleReset = useCallback(() => {
- 584 |     logChartInteractionEvent({
- 585 |       interactionType: "RESET",
- 586 |       visualizationLibrary: "Recharts",
- 587 |       interactionSource: "button",
- 588 |     });
- 589 |     setTransform({ scale: 1, x: 0, y: 0 });
- 590 |     setHoveredPoint(null);
- 591 |   }, []);
- 592 | 
- 593 |   const handleWheel = useCallback(
- 594 |     (event) => {
- 595 |       event.preventDefault();
- 596 | 
- 597 |       const rect = svgRef.current?.getBoundingClientRect();
- 598 |       if (!rect) return;
- 599 | 
- 600 |       const clientX = event.clientX - rect.left;
+ 557 |   const zoomTo = useCallback(
+ 558 |     (nextScale, anchorX, anchorY) => {
+ 559 |       setTransform((prev) => {
+ 560 |         const clampedScale = clamp(nextScale, fitScale, ZOOM_MAX);
+ 561 | 
+ 562 |         const pivotX = Number.isFinite(anchorX) ? anchorX : innerWidth / 2;
+ 563 |         const pivotY = Number.isFinite(anchorY) ? anchorY : innerHeight / 2;
+ 564 | 
+ 565 |         const nextX =
+ 566 |           prev.x - (pivotX - prev.x) * (clampedScale / prev.scale - 1);
+ 567 |         const nextY =
+ 568 |           prev.y - (pivotY - prev.y) * (clampedScale / prev.scale - 1);
+ 569 | 
+ 570 |         return clampTransform(
+ 571 |           { scale: clampedScale, x: nextX, y: nextY },
+ 572 |           contentWidth,
+ 573 |           contentHeight,
+ 574 |           innerWidth,
+ 575 |           innerHeight,
+ 576 |         );
+ 577 |       });
+ 578 |     },
+ 579 |     [innerWidth, innerHeight, contentWidth, contentHeight, fitScale],
+ 580 |   );
+ 581 | 
+ 582 |   const handleZoomIn = useCallback(() => {
+ 583 |     logChartInteractionEvent({
+ 584 |       interactionType: "ZOOM_IN",
+ 585 |       visualizationLibrary: "Recharts",
+ 586 |       interactionSource: "button",
+ 587 |     });
+ 588 |     zoomTo(transform.scale * ZOOM_STEP, innerWidth / 2, innerHeight / 2);
+ 589 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
+ 590 | 
+ 591 |   const handleZoomOut = useCallback(() => {
+ 592 |     if (transform.scale <= fitScale + ZOOM_EPS) {
+ 593 |       return;
+ 594 |     }
+ 595 | 
+ 596 |     logChartInteractionEvent({
+ 597 |       interactionType: "ZOOM_OUT",
+ 598 |       visualizationLibrary: "Recharts",
+ 599 |       interactionSource: "button",
+ 600 |     });
 ```
 
 ### Chunk 4/7
 
 ```jsx
- 601 |       const clientY = event.clientY - rect.top;
- 602 | 
- 603 |       const localX = clientX - PLOT_MARGIN.left;
- 604 |       const localY = clientY - PLOT_MARGIN.top;
- 605 | 
- 606 |       if (
- 607 |         localX < 0 ||
- 608 |         localY < 0 ||
- 609 |         localX > innerWidth ||
- 610 |         localY > innerHeight
- 611 |       ) {
- 612 |         return;
- 613 |       }
+ 601 | 
+ 602 |     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
+ 603 |   }, [transform.scale, zoomTo, innerWidth, innerHeight, fitScale]);
+ 604 | 
+ 605 |   const handleReset = useCallback(() => {
+ 606 |     logChartInteractionEvent({
+ 607 |       interactionType: "RESET",
+ 608 |       visualizationLibrary: "Recharts",
+ 609 |       interactionSource: "button",
+ 610 |     });
+ 611 |     setTransform(homeTransform);
+ 612 |     setHoveredPoint(null);
+ 613 |   }, [homeTransform]);
  614 | 
- 615 |       const isZoomIn = event.deltaY < 0;
- 616 | 
- 617 |       if (!isZoomIn && transform.scale <= MIN_ZOOM_SCALE) {
- 618 |         return;
- 619 |       }
- 620 | 
- 621 |       logChartInteractionEvent({
- 622 |         interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
- 623 |         visualizationLibrary: "Recharts",
- 624 |         interactionSource: "wheel",
- 625 |       });
- 626 | 
- 627 |       const factor = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
- 628 | 
- 629 |       setTransform((prev) => {
- 630 |         const clampedScale = clamp(prev.scale * factor, ZOOM_MIN, ZOOM_MAX);
- 631 | 
- 632 |         if (clampedScale <= MIN_ZOOM_SCALE) {
- 633 |           return { scale: 1, x: 0, y: 0 };
- 634 |         }
- 635 | 
- 636 |         const nextX =
- 637 |           prev.x - (localX - prev.x) * (clampedScale / prev.scale - 1);
- 638 |         const nextY =
- 639 |           prev.y - (localY - prev.y) * (clampedScale / prev.scale - 1);
- 640 |         return clampTransform(
- 641 |           { scale: clampedScale, x: nextX, y: nextY },
- 642 |           innerWidth,
- 643 |           innerHeight,
- 644 |         );
- 645 |       });
- 646 |     },
- 647 |     [innerWidth, innerHeight, transform.scale],
- 648 |   );
- 649 | 
- 650 |   const handlePointerDown = useCallback(
- 651 |     (event) => {
- 652 |       const rect = svgRef.current?.getBoundingClientRect();
- 653 |       if (!rect) return;
- 654 | 
- 655 |       const localX = event.clientX - rect.left - PLOT_MARGIN.left;
- 656 |       const localY = event.clientY - rect.top - PLOT_MARGIN.top;
- 657 | 
- 658 |       if (
- 659 |         localX < 0 ||
- 660 |         localY < 0 ||
- 661 |         localX > innerWidth ||
- 662 |         localY > innerHeight
- 663 |       ) {
- 664 |         return;
- 665 |       }
- 666 | 
- 667 |       if (isPanMode) {
- 668 |         if (transform.scale <= MIN_ZOOM_SCALE) {
- 669 |           return;
- 670 |         }
- 671 |         logChartInteractionEvent({
- 672 |           interactionType: "PAN",
- 673 |           visualizationLibrary: "Recharts",
- 674 |           interactionSource: "drag",
- 675 |         });
- 676 |         setIsDragging(true);
- 677 |         dragRef.current = {
- 678 |           dragging: true,
- 679 |           pointerId: event.pointerId,
- 680 |           startClientX: event.clientX,
- 681 |           startClientY: event.clientY,
- 682 |           startTransform: transform,
- 683 |         };
- 684 |         event.currentTarget.setPointerCapture?.(event.pointerId);
- 685 |         return;
- 686 |       }
- 687 | 
- 688 |       const clampedX = clamp(localX, 0, innerWidth);
- 689 |       const clampedY = clamp(localY, 0, innerHeight);
- 690 |       brushStartRef.current = { x: clampedX, y: clampedY };
- 691 |       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
- 692 |       event.currentTarget.setPointerCapture?.(event.pointerId);
- 693 |     },
- 694 |     [innerWidth, innerHeight, transform, isPanMode],
- 695 |   );
- 696 | 
- 697 |   const handlePointerMove = useCallback(
- 698 |     (event) => {
- 699 |       if (brushStartRef.current) {
- 700 |         const rect = svgRef.current?.getBoundingClientRect();
- 701 |         if (!rect) return;
- 702 | 
- 703 |         const localX = clamp(
- 704 |           event.clientX - rect.left - PLOT_MARGIN.left,
- 705 |           0,
- 706 |           innerWidth,
- 707 |         );
- 708 |         const localY = clamp(
- 709 |           event.clientY - rect.top - PLOT_MARGIN.top,
- 710 |           0,
- 711 |           innerHeight,
- 712 |         );
- 713 |         const startPoint = brushStartRef.current;
+ 615 |   const handleWheel = useCallback(
+ 616 |     (event) => {
+ 617 |       event.preventDefault();
+ 618 | 
+ 619 |       const rect = svgRef.current?.getBoundingClientRect();
+ 620 |       if (!rect) return;
+ 621 | 
+ 622 |       const clientX = event.clientX - rect.left;
+ 623 |       const clientY = event.clientY - rect.top;
+ 624 | 
+ 625 |       const localX = clientX - PLOT_MARGIN.left;
+ 626 |       const localY = clientY - PLOT_MARGIN.top;
+ 627 | 
+ 628 |       if (
+ 629 |         localX < 0 ||
+ 630 |         localY < 0 ||
+ 631 |         localX > innerWidth ||
+ 632 |         localY > innerHeight
+ 633 |       ) {
+ 634 |         return;
+ 635 |       }
+ 636 | 
+ 637 |       const isZoomIn = event.deltaY < 0;
+ 638 | 
+ 639 |       if (!isZoomIn && transform.scale <= fitScale + ZOOM_EPS) {
+ 640 |         return;
+ 641 |       }
+ 642 | 
+ 643 |       logChartInteractionEvent({
+ 644 |         interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
+ 645 |         visualizationLibrary: "Recharts",
+ 646 |         interactionSource: "wheel",
+ 647 |       });
+ 648 | 
+ 649 |       const factor = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+ 650 | 
+ 651 |       setTransform((prev) => {
+ 652 |         const clampedScale = clamp(prev.scale * factor, fitScale, ZOOM_MAX);
+ 653 | 
+ 654 |         const nextX =
+ 655 |           prev.x - (localX - prev.x) * (clampedScale / prev.scale - 1);
+ 656 |         const nextY =
+ 657 |           prev.y - (localY - prev.y) * (clampedScale / prev.scale - 1);
+ 658 |         return clampTransform(
+ 659 |           { scale: clampedScale, x: nextX, y: nextY },
+ 660 |           contentWidth,
+ 661 |           contentHeight,
+ 662 |           innerWidth,
+ 663 |           innerHeight,
+ 664 |         );
+ 665 |       });
+ 666 |     },
+ 667 |     [
+ 668 |       innerWidth,
+ 669 |       innerHeight,
+ 670 |       contentWidth,
+ 671 |       contentHeight,
+ 672 |       transform.scale,
+ 673 |       fitScale,
+ 674 |     ],
+ 675 |   );
+ 676 | 
+ 677 |   const handlePointerDown = useCallback(
+ 678 |     (event) => {
+ 679 |       const rect = svgRef.current?.getBoundingClientRect();
+ 680 |       if (!rect) return;
+ 681 | 
+ 682 |       const localX = event.clientX - rect.left - PLOT_MARGIN.left;
+ 683 |       const localY = event.clientY - rect.top - PLOT_MARGIN.top;
+ 684 | 
+ 685 |       if (
+ 686 |         localX < 0 ||
+ 687 |         localY < 0 ||
+ 688 |         localX > innerWidth ||
+ 689 |         localY > innerHeight
+ 690 |       ) {
+ 691 |         return;
+ 692 |       }
+ 693 | 
+ 694 |       if (isPanMode) {
+ 695 |         if (transform.scale <= fitScale + ZOOM_EPS) {
+ 696 |           return;
+ 697 |         }
+ 698 |         logChartInteractionEvent({
+ 699 |           interactionType: "PAN",
+ 700 |           visualizationLibrary: "Recharts",
+ 701 |           interactionSource: "drag",
+ 702 |         });
+ 703 |         setIsDragging(true);
+ 704 |         dragRef.current = {
+ 705 |           dragging: true,
+ 706 |           pointerId: event.pointerId,
+ 707 |           startClientX: event.clientX,
+ 708 |           startClientY: event.clientY,
+ 709 |           startTransform: transform,
+ 710 |         };
+ 711 |         event.currentTarget.setPointerCapture?.(event.pointerId);
+ 712 |         return;
+ 713 |       }
  714 | 
- 715 |         setBrushRect({
- 716 |           x: Math.min(startPoint.x, localX),
- 717 |           y: Math.min(startPoint.y, localY),
- 718 |           width: Math.abs(localX - startPoint.x),
- 719 |           height: Math.abs(localY - startPoint.y),
- 720 |         });
- 721 |         return;
- 722 |       }
- 723 |       const dragState = dragRef.current;
- 724 | 
- 725 |       if (dragState?.dragging) {
- 726 |         if (dragState.pointerId !== event.pointerId) {
- 727 |           return;
- 728 |         }
+ 715 |       const clampedX = clamp(localX, 0, innerWidth);
+ 716 |       const clampedY = clamp(localY, 0, innerHeight);
+ 717 |       brushStartRef.current = { x: clampedX, y: clampedY };
+ 718 |       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
+ 719 |       event.currentTarget.setPointerCapture?.(event.pointerId);
+ 720 |     },
+ 721 |     [innerWidth, innerHeight, fitScale, transform, isPanMode],
+ 722 |   );
+ 723 | 
+ 724 |   const handlePointerMove = useCallback(
+ 725 |     (event) => {
+ 726 |       if (brushStartRef.current) {
+ 727 |         const rect = svgRef.current?.getBoundingClientRect();
+ 728 |         if (!rect) return;
  729 | 
- 730 |         if (dragState.startTransform.scale <= MIN_ZOOM_SCALE) {
- 731 |           dragRef.current = createInitialDragState();
- 732 |           setIsDragging(false);
- 733 |           setTransform({ scale: 1, x: 0, y: 0 });
- 734 |           return;
- 735 |         }
- 736 | 
- 737 |         const dx = event.clientX - dragState.startClientX;
- 738 |         const dy = event.clientY - dragState.startClientY;
- 739 | 
- 740 |         const next = clampTransform(
- 741 |           {
- 742 |             scale: dragState.startTransform.scale,
- 743 |             x: dragState.startTransform.x + dx,
- 744 |             y: dragState.startTransform.y + dy,
- 745 |           },
- 746 |           innerWidth,
- 747 |           innerHeight,
- 748 |         );
- 749 | 
- 750 |         scheduleTransformUpdate(next);
- 751 |         return;
- 752 |       }
- 753 | 
- 754 |       const target = event.target?.closest?.("[data-point-id]");
- 755 | 
- 756 |       if (!target) {
- 757 |         setHoveredPoint((prev) => (prev ? null : prev));
- 758 |         return;
- 759 |       }
- 760 | 
- 761 |       const id = target.getAttribute("data-point-id");
- 762 |       const point = pointMap.get(id);
+ 730 |         const localX = clamp(
+ 731 |           event.clientX - rect.left - PLOT_MARGIN.left,
+ 732 |           0,
+ 733 |           innerWidth,
+ 734 |         );
+ 735 |         const localY = clamp(
+ 736 |           event.clientY - rect.top - PLOT_MARGIN.top,
+ 737 |           0,
+ 738 |           innerHeight,
+ 739 |         );
+ 740 |         const startPoint = brushStartRef.current;
+ 741 | 
+ 742 |         setBrushRect({
+ 743 |           x: Math.min(startPoint.x, localX),
+ 744 |           y: Math.min(startPoint.y, localY),
+ 745 |           width: Math.abs(localX - startPoint.x),
+ 746 |           height: Math.abs(localY - startPoint.y),
+ 747 |         });
+ 748 |         return;
+ 749 |       }
+ 750 |       const dragState = dragRef.current;
+ 751 | 
+ 752 |       if (dragState?.dragging) {
+ 753 |         if (dragState.pointerId !== event.pointerId) {
+ 754 |           return;
+ 755 |         }
+ 756 | 
+ 757 |         if (dragState.startTransform.scale <= fitScale + ZOOM_EPS) {
+ 758 |           dragRef.current = createInitialDragState();
+ 759 |           setIsDragging(false);
+ 760 |           setTransform(homeTransform);
+ 761 |           return;
+ 762 |         }
  763 | 
- 764 |       if (!point) {
- 765 |         setHoveredPoint((prev) => (prev ? null : prev));
- 766 |         return;
- 767 |       }
- 768 | 
- 769 |       setTooltipPosition({
- 770 |         x: event.clientX + 12,
- 771 |         y: event.clientY + 12,
- 772 |       });
- 773 | 
- 774 |       setHoveredPoint((prev) => (prev?.id === point.id ? prev : point));
- 775 |     },
- 776 |     [pointMap, innerWidth, innerHeight, scheduleTransformUpdate],
- 777 |   );
+ 764 |         const dx = event.clientX - dragState.startClientX;
+ 765 |         const dy = event.clientY - dragState.startClientY;
+ 766 | 
+ 767 |         const next = clampTransform(
+ 768 |           {
+ 769 |             scale: dragState.startTransform.scale,
+ 770 |             x: dragState.startTransform.x + dx,
+ 771 |             y: dragState.startTransform.y + dy,
+ 772 |           },
+ 773 |           contentWidth,
+ 774 |           contentHeight,
+ 775 |           innerWidth,
+ 776 |           innerHeight,
+ 777 |         );
  778 | 
- 779 |   const handlePointerUp = useCallback(
- 780 |     (event) => {
- 781 |       if (brushStartRef.current && brushRect) {
- 782 |         const isTooSmall =
- 783 |           brushRect.width < BRUSH_MIN_PIXELS ||
- 784 |           brushRect.height < BRUSH_MIN_PIXELS;
- 785 | 
- 786 |         if (!isTooSmall) {
- 787 |           logChartInteractionEvent({
- 788 |             interactionType: "ZOOM_IN",
- 789 |             visualizationLibrary: "Recharts",
- 790 |             interactionSource: "brush",
- 791 |           });
- 792 |           const newTransform = convertBrushToTransform(
- 793 |             brushRect,
- 794 |             transform,
- 795 |             innerWidth,
- 796 |             innerHeight,
- 797 |           );
- 798 | 
- 799 |           if (newTransform.scale <= MIN_ZOOM_SCALE) {
- 800 |             setTransform({ scale: 1, x: 0, y: 0 });
+ 779 |         scheduleTransformUpdate(next);
+ 780 |         return;
+ 781 |       }
+ 782 | 
+ 783 |       // --- Hover hit-testing (geometry-based; works for SVG and canvas) ---
+ 784 |       const rect = svgRef.current?.getBoundingClientRect();
+ 785 |       if (!rect) return;
+ 786 | 
+ 787 |       const hoverLocalX = event.clientX - rect.left - PLOT_MARGIN.left;
+ 788 |       const hoverLocalY = event.clientY - rect.top - PLOT_MARGIN.top;
+ 789 | 
+ 790 |       if (
+ 791 |         hoverLocalX < 0 ||
+ 792 |         hoverLocalY < 0 ||
+ 793 |         hoverLocalX > innerWidth ||
+ 794 |         hoverLocalY > innerHeight
+ 795 |       ) {
+ 796 |         setHoveredPoint((prev) => (prev ? null : prev));
+ 797 |         return;
+ 798 |       }
+ 799 | 
+ 800 |       // Undo pan/zoom to get content-space coordinates
 ```
 
 ### Chunk 5/7
 
 ```jsx
- 801 |           } else {
- 802 |             setTransform(newTransform);
- 803 |           }
- 804 |         }
- 805 | 
- 806 |         brushStartRef.current = null;
- 807 |         setBrushRect(null);
- 808 |         event.currentTarget.releasePointerCapture?.(event.pointerId);
- 809 |         return;
- 810 |       }
- 811 |       setIsDragging(false);
- 812 | 
- 813 |       const dragState = dragRef.current;
- 814 | 
- 815 |       if (dragState?.dragging && transform.scale <= MIN_ZOOM_SCALE) {
- 816 |         setTransform({ scale: 1, x: 0, y: 0 });
- 817 |       }
- 818 | 
- 819 |       dragRef.current = createInitialDragState();
- 820 |       event.currentTarget.releasePointerCapture?.(event.pointerId);
- 821 |     },
- 822 |     [brushRect, transform, innerWidth, innerHeight],
- 823 |   );
- 824 | 
- 825 |   useEffect(() => {
- 826 |     console.log("[RechartsPlotter] point stats", renderStats);
- 827 |   }, [renderStats]);
- 828 | 
- 829 |   useEffect(() => {
- 830 |     return () => {
- 831 |       if (rafIdRef.current) {
- 832 |         cancelAnimationFrame(rafIdRef.current);
- 833 |         rafIdRef.current = null;
- 834 |       }
- 835 |       dragRef.current = createInitialDragState();
- 836 |       brushStartRef.current = null;
- 837 |       cachedScalesRef.current = { key: null, xScale: null, yScale: null };
- 838 |       pendingTransformRef.current = null;
- 839 |     };
- 840 |   }, []);
- 841 | 
- 842 |   useEffect(() => {
- 843 |     const svgElement = svgRef.current;
- 844 | 
- 845 |     if (!svgElement) return;
- 846 | 
- 847 |     const wheelHandler = (event) => {
- 848 |       event.preventDefault();
- 849 |       handleWheel(event);
- 850 |     };
- 851 | 
- 852 |     svgElement.addEventListener("wheel", wheelHandler, {
- 853 |       passive: false,
- 854 |     });
- 855 | 
- 856 |     return () => {
- 857 |       svgElement.removeEventListener("wheel", wheelHandler);
- 858 |     };
- 859 |   }, [handleWheel]);
- 860 | 
- 861 |   const handleDoubleClick = useCallback(() => {
- 862 |     logChartInteractionEvent({
- 863 |       interactionType: "RESET",
- 864 |       visualizationLibrary: "Recharts",
- 865 |       interactionSource: "double_click",
- 866 |     });
- 867 |     setTransform({ scale: 1, x: 0, y: 0 });
- 868 |     setHoveredPoint(null);
- 869 |   }, []);
- 870 | 
- 871 |   const stageCursor = isPanMode
- 872 |     ? isDragging
- 873 |       ? "grabbing"
- 874 |       : "grab"
- 875 |     : "crosshair";
- 876 | 
- 877 |   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
- 878 |   return (
- 879 |     <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
- 880 |       {enableCanvas ? (
- 881 |         <ImageCanvasLayer
- 882 |           points={visiblePointsForRender}
- 883 |           baseXScale={baseXScale}
- 884 |           baseYScale={baseYScale}
- 885 |           cellSize={adaptiveCellSizeForRender}
- 886 |           transform={transform}
- 887 |           imageCount={effectiveImageCountForRender}
- 888 |         />
- 889 |       ) : (
- 890 |         <svg
- 891 |           width={containerWidth}
- 892 |           height={height}
- 893 |           style={{
- 894 |             position: "absolute",
- 895 |             top: 0,
- 896 |             left: 0,
- 897 |             pointerEvents: "none",
- 898 |           }}
- 899 |         >
- 900 |           <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
- 901 |             <SvgImageLayer
- 902 |               points={visiblePointsForRender}
- 903 |               baseXScale={baseXScale}
- 904 |               baseYScale={baseYScale}
- 905 |               cellSize={adaptiveCellSizeForRender}
- 906 |               transform={transform}
- 907 |               imageCount={effectiveImageCountForRender}
- 908 |             />
- 909 |           </g>
- 910 |         </svg>
- 911 |       )}
- 912 |       <ControlsLayer
- 913 |         zoomLevel={transform.scale}
- 914 |         onZoomIn={handleZoomIn}
- 915 |         onZoomOut={handleZoomOut}
- 916 |         onReset={handleReset}
- 917 |         interactionMode={interactionMode}
- 918 |         onModeChange={setInteractionMode}
- 919 |       />
+ 801 |       const contentX = (hoverLocalX - transform.x) / transform.scale;
+ 802 |       const contentY = (hoverLocalY - transform.y) / transform.scale;
+ 803 | 
+ 804 |       const hitRadius = Math.max(adaptiveCellSizeForRender * 0.6, 4);
+ 805 |       const hitRadiusSq = hitRadius * hitRadius;
+ 806 | 
+ 807 |       let nearest = null;
+ 808 |       let nearestDistSq = Infinity;
+ 809 | 
+ 810 |       for (const p of visiblePointsForRender) {
+ 811 |         const px = baseXScale(p.scaledX);
+ 812 |         const py = baseYScale(p.scaledY);
+ 813 |         const dx = contentX - px;
+ 814 |         const dy = contentY - py;
+ 815 |         const distSq = dx * dx + dy * dy;
+ 816 |         if (distSq <= hitRadiusSq && distSq < nearestDistSq) {
+ 817 |           nearest = p;
+ 818 |           nearestDistSq = distSq;
+ 819 |         }
+ 820 |       }
+ 821 | 
+ 822 |       if (!nearest) {
+ 823 |         setHoveredPoint((prev) => (prev ? null : prev));
+ 824 |         return;
+ 825 |       }
+ 826 | 
+ 827 |       setTooltipPosition({
+ 828 |         x: event.clientX + 12,
+ 829 |         y: event.clientY + 12,
+ 830 |       });
+ 831 | 
+ 832 |       setHoveredPoint((prev) => (prev?.id === nearest.id ? prev : nearest));
+ 833 |     },
+ 834 |     [
+ 835 |       innerWidth,
+ 836 |       innerHeight,
+ 837 |       contentWidth,
+ 838 |       contentHeight,
+ 839 |       fitScale,
+ 840 |       homeTransform,
+ 841 |       scheduleTransformUpdate,
+ 842 |       transform,
+ 843 |       adaptiveCellSizeForRender,
+ 844 |       visiblePointsForRender,
+ 845 |       baseXScale,
+ 846 |       baseYScale,
+ 847 |     ],
+ 848 |   );
+ 849 | 
+ 850 |   const handlePointerUp = useCallback(
+ 851 |     (event) => {
+ 852 |       if (brushStartRef.current && brushRect) {
+ 853 |         const isTooSmall =
+ 854 |           brushRect.width < BRUSH_MIN_PIXELS ||
+ 855 |           brushRect.height < BRUSH_MIN_PIXELS;
+ 856 | 
+ 857 |         if (!isTooSmall) {
+ 858 |           logChartInteractionEvent({
+ 859 |             interactionType: "ZOOM_IN",
+ 860 |             visualizationLibrary: "Recharts",
+ 861 |             interactionSource: "brush",
+ 862 |           });
+ 863 |           const newTransform = convertBrushToTransform(
+ 864 |             brushRect,
+ 865 |             transform,
+ 866 |             contentWidth,
+ 867 |             contentHeight,
+ 868 |             innerWidth,
+ 869 |             innerHeight,
+ 870 |             fitScale,
+ 871 |           );
+ 872 | 
+ 873 |           setTransform(newTransform);
+ 874 |         }
+ 875 | 
+ 876 |         brushStartRef.current = null;
+ 877 |         setBrushRect(null);
+ 878 |         event.currentTarget.releasePointerCapture?.(event.pointerId);
+ 879 |         return;
+ 880 |       }
+ 881 |       setIsDragging(false);
+ 882 | 
+ 883 |       const dragState = dragRef.current;
+ 884 | 
+ 885 |       if (dragState?.dragging && transform.scale <= fitScale + ZOOM_EPS) {
+ 886 |         setTransform(homeTransform);
+ 887 |       }
+ 888 | 
+ 889 |       dragRef.current = createInitialDragState();
+ 890 |       event.currentTarget.releasePointerCapture?.(event.pointerId);
+ 891 |     },
+ 892 |     [
+ 893 |       brushRect,
+ 894 |       transform,
+ 895 |       innerWidth,
+ 896 |       innerHeight,
+ 897 |       contentWidth,
+ 898 |       contentHeight,
+ 899 |       fitScale,
+ 900 |       homeTransform,
+ 901 |     ],
+ 902 |   );
+ 903 | 
+ 904 |   useEffect(() => {
+ 905 |     console.log("[RechartsPlotter] point stats", renderStats);
+ 906 |   }, [renderStats]);
+ 907 | 
+ 908 |   useEffect(() => {
+ 909 |     return () => {
+ 910 |       if (rafIdRef.current) {
+ 911 |         cancelAnimationFrame(rafIdRef.current);
+ 912 |         rafIdRef.current = null;
+ 913 |       }
+ 914 |       dragRef.current = createInitialDragState();
+ 915 |       brushStartRef.current = null;
+ 916 |       cachedScalesRef.current = { key: null, xScale: null, yScale: null };
+ 917 |       pendingTransformRef.current = null;
+ 918 |     };
+ 919 |   }, []);
  920 | 
- 921 |       <svg
- 922 |         ref={svgRef}
- 923 |         width={containerWidth}
- 924 |         height={height}
- 925 |         style={{
- 926 |           display: "block",
- 927 |           touchAction: "none",
- 928 |           userSelect: "none",
- 929 |           cursor: stageCursor,
- 930 |         }}
- 931 |         onPointerDown={handlePointerDown}
- 932 |         onPointerMove={handlePointerMove}
- 933 |         onPointerUp={handlePointerUp}
- 934 |         onPointerLeave={handlePointerUp}
- 935 |         onPointerCancel={handlePointerUp}
- 936 |         onDoubleClick={handleDoubleClick}
- 937 |       >
- 938 |         <defs>
- 939 |           <clipPath id={clipId}>
- 940 |             <rect
- 941 |               x={PLOT_MARGIN.left}
- 942 |               y={PLOT_MARGIN.top}
- 943 |               width={innerWidth}
- 944 |               height={innerHeight}
- 945 |             />
- 946 |           </clipPath>
- 947 |         </defs>
- 948 | 
- 949 |         <rect
- 950 |           x={0}
- 951 |           y={0}
- 952 |           width={containerWidth}
- 953 |           height={height}
- 954 |           fill="#16213e"
- 955 |         />
- 956 | 
- 957 |         <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
- 958 |           <rect
- 959 |             x={0}
- 960 |             y={0}
- 961 |             width={innerWidth}
- 962 |             height={innerHeight}
- 963 |             fill="#16213e"
- 964 |           />
- 965 | 
- 966 |           <AxisGrid {...axisProps} />
+ 921 |   useEffect(() => {
+ 922 |     const svgElement = svgRef.current;
+ 923 | 
+ 924 |     if (!svgElement) return;
+ 925 | 
+ 926 |     const wheelHandler = (event) => {
+ 927 |       event.preventDefault();
+ 928 |       handleWheel(event);
+ 929 |     };
+ 930 | 
+ 931 |     svgElement.addEventListener("wheel", wheelHandler, {
+ 932 |       passive: false,
+ 933 |     });
+ 934 | 
+ 935 |     return () => {
+ 936 |       svgElement.removeEventListener("wheel", wheelHandler);
+ 937 |     };
+ 938 |   }, [handleWheel]);
+ 939 | 
+ 940 |   const handleDoubleClick = useCallback(() => {
+ 941 |     logChartInteractionEvent({
+ 942 |       interactionType: "RESET",
+ 943 |       visualizationLibrary: "Recharts",
+ 944 |       interactionSource: "double_click",
+ 945 |     });
+ 946 |     setTransform(homeTransform);
+ 947 |     setHoveredPoint(null);
+ 948 |   }, [homeTransform]);
+ 949 | 
+ 950 |   const stageCursor = isPanMode
+ 951 |     ? isDragging
+ 952 |       ? "grabbing"
+ 953 |       : "grab"
+ 954 |     : "crosshair";
+ 955 | 
+ 956 |   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
+ 957 |   return (
+ 958 |     <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
+ 959 |       <ControlsLayer
+ 960 |         zoomLevel={transform.scale / fitScale}
+ 961 |         onZoomIn={handleZoomIn}
+ 962 |         onZoomOut={handleZoomOut}
+ 963 |         onReset={handleReset}
+ 964 |         interactionMode={interactionMode}
+ 965 |         onModeChange={setInteractionMode}
+ 966 |       />
  967 | 
- 968 |           <AxisLabels {...axisProps} />
- 969 | 
- 970 |           <g clipPath={`url(#${clipId})`}>
- 971 |             <g transform={contentTransform}></g>
- 972 |           </g>
- 973 | 
- 974 |           <rect
- 975 |             x={0}
- 976 |             y={0}
- 977 |             width={innerWidth}
- 978 |             height={innerHeight}
- 979 |             fill="transparent"
- 980 |             stroke="#555"
- 981 |             pointerEvents="none"
- 982 |           />
- 983 | 
- 984 |           {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
- 985 |             <rect
- 986 |               x={brushRect.x}
- 987 |               y={brushRect.y}
- 988 |               width={brushRect.width}
- 989 |               height={brushRect.height}
- 990 |               fill={BRUSH_FILL}
- 991 |               stroke={BRUSH_STROKE}
- 992 |               strokeWidth={BRUSH_STROKE_WIDTH}
- 993 |               rx={2}
- 994 |               ry={2}
- 995 |               pointerEvents="none"
- 996 |             />
- 997 |           )}
- 998 |         </g>
- 999 |       </svg>
-1000 |       <TooltipOverlay
+ 968 |       <div style={{ position: "relative", width: "100%" }}>
+ 969 |         {enableCanvas ? (
+ 970 |           <ImageCanvasLayer
+ 971 |             points={visiblePointsForRender}
+ 972 |             baseXScale={baseXScale}
+ 973 |             baseYScale={baseYScale}
+ 974 |             cellSize={adaptiveCellSizeForRender}
+ 975 |             transform={transform}
+ 976 |             imageCount={effectiveImageCountForRender}
+ 977 |           />
+ 978 |         ) : (
+ 979 |           <svg
+ 980 |             width={containerWidth}
+ 981 |             height={height}
+ 982 |             style={{
+ 983 |               position: "absolute",
+ 984 |               top: 0,
+ 985 |               left: 0,
+ 986 |               pointerEvents: "none",
+ 987 |             }}
+ 988 |           >
+ 989 |             <defs>
+ 990 |               <clipPath id={`${clipId}-img`}>
+ 991 |                 <rect
+ 992 |                   x={PLOT_MARGIN.left}
+ 993 |                   y={PLOT_MARGIN.top}
+ 994 |                   width={innerWidth}
+ 995 |                   height={innerHeight}
+ 996 |                 />
+ 997 |               </clipPath>
+ 998 |             </defs>
+ 999 |             <g clipPath={`url(#${clipId}-img)`}>
+1000 |               <g
 ```
 
 ### Chunk 6/7
 
 ```jsx
-1001 |         hoveredPoint={hoveredPoint}
-1002 |         tooltipRef={tooltipRef}
-1003 |         position={tooltipPosition}
-1004 |       />
-1005 |     </div>
-1006 |   );
-1007 | }
-1008 | 
-1009 | const AxisGrid = memo(function AxisGrid({
-1010 |   xTicks,
-1011 |   yTicks,
-1012 |   xTickScale,
-1013 |   yTickScale,
-1014 |   innerWidth,
-1015 |   innerHeight,
-1016 | }) {
-1017 |   return (
-1018 |     <>
-1019 |       {xTicks.map((tick, index) => {
-1020 |         const x = xTickScale(tick);
-1021 |         return (
-1022 |           <line
-1023 |             key={`xgrid-${index}`}
-1024 |             x1={x}
-1025 |             y1={0}
-1026 |             x2={x}
-1027 |             y2={innerHeight}
-1028 |             stroke="#2a2a3e"
-1029 |             strokeDasharray="3 3"
-1030 |           />
-1031 |         );
-1032 |       })}
-1033 | 
-1034 |       {yTicks.map((tick, index) => {
-1035 |         const y = yTickScale(tick);
-1036 |         return (
-1037 |           <line
-1038 |             key={`ygrid-${index}`}
-1039 |             x1={0}
-1040 |             y1={y}
-1041 |             x2={innerWidth}
-1042 |             y2={y}
-1043 |             stroke="#2a2a3e"
-1044 |             strokeDasharray="3 3"
-1045 |           />
-1046 |         );
-1047 |       })}
-1048 |     </>
-1049 |   );
-1050 | });
+1001 |                 transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}
+1002 |               >
+1003 |                 <SvgImageLayer
+1004 |                   points={visiblePointsForRender}
+1005 |                   baseXScale={baseXScale}
+1006 |                   baseYScale={baseYScale}
+1007 |                   cellSize={adaptiveCellSizeForRender}
+1008 |                   transform={transform}
+1009 |                   imageCount={effectiveImageCountForRender}
+1010 |                 />
+1011 |               </g>
+1012 |             </g>
+1013 |           </svg>
+1014 |         )}
+1015 | 
+1016 |         <svg
+1017 |           ref={svgRef}
+1018 |           width={containerWidth}
+1019 |           height={height}
+1020 |           style={{
+1021 |             display: "block",
+1022 |             touchAction: "none",
+1023 |             userSelect: "none",
+1024 |             cursor: stageCursor,
+1025 |           }}
+1026 |           onPointerDown={handlePointerDown}
+1027 |           onPointerMove={handlePointerMove}
+1028 |           onPointerUp={handlePointerUp}
+1029 |           onPointerLeave={handlePointerUp}
+1030 |           onPointerCancel={handlePointerUp}
+1031 |           onDoubleClick={handleDoubleClick}
+1032 |         >
+1033 |           <defs>
+1034 |             <clipPath id={clipId}>
+1035 |               <rect
+1036 |                 x={PLOT_MARGIN.left}
+1037 |                 y={PLOT_MARGIN.top}
+1038 |                 width={innerWidth}
+1039 |                 height={innerHeight}
+1040 |               />
+1041 |             </clipPath>
+1042 |           </defs>
+1043 | 
+1044 |           <rect
+1045 |             x={0}
+1046 |             y={0}
+1047 |             width={containerWidth}
+1048 |             height={height}
+1049 |             fill="#16213e"
+1050 |           />
 1051 | 
-1052 | const AxisLabels = memo(function AxisLabels({
-1053 |   xTicks,
-1054 |   yTicks,
-1055 |   xTickScale,
-1056 |   yTickScale,
-1057 |   innerHeight,
-1058 | }) {
-1059 |   return (
-1060 |     <>
-1061 |       {xTicks.map((tick, index) => {
-1062 |         const x = xTickScale(tick);
-1063 |         return (
-1064 |           <text
-1065 |             key={`xlabel-${index}`}
-1066 |             x={x}
-1067 |             y={innerHeight + 18}
-1068 |             fill="#888"
-1069 |             fontSize="11"
-1070 |             textAnchor="middle"
-1071 |           >
-1072 |             {formatTick(tick)}
-1073 |           </text>
-1074 |         );
-1075 |       })}
-1076 | 
-1077 |       {yTicks.map((tick, index) => {
-1078 |         const y = yTickScale(tick);
-1079 |         return (
-1080 |           <text
-1081 |             key={`ylabel-${index}`}
-1082 |             x={-8}
-1083 |             y={y + 4}
-1084 |             fill="#888"
-1085 |             fontSize="11"
-1086 |             textAnchor="end"
-1087 |           >
-1088 |             {formatTick(tick)}
-1089 |           </text>
-1090 |         );
-1091 |       })}
-1092 |     </>
-1093 |   );
-1094 | });
-1095 | 
-1096 | function extentWithPaddingFromPoints(points, accessor) {
-1097 |   if (!points.length) return [0, 1];
-1098 | 
-1099 |   let min = Infinity;
-1100 |   let max = -Infinity;
-1101 | 
-1102 |   for (const point of points) {
-1103 |     const value = accessor(point);
-1104 | 
-1105 |     if (value < min) min = value;
-1106 |     if (value > max) max = value;
-1107 |   }
-1108 | 
-1109 |   const span = max - min;
-1110 |   const pad = span === 0 ? 5 : Math.max(span * 0.18, 1);
-1111 | 
-1112 |   return [min - pad, max + pad];
-1113 | }
-1114 | 
-1115 | function computeVisibleDomain(
-1116 |   xExtent,
-1117 |   yExtent,
-1118 |   transform,
-1119 |   innerWidth,
-1120 |   innerHeight,
-1121 | ) {
-1122 |   const domainWidth = xExtent[1] - xExtent[0];
-1123 |   const domainHeight = yExtent[1] - yExtent[0];
-1124 | 
-1125 |   const xMin =
-1126 |     xExtent[0] - (transform.x / transform.scale / innerWidth) * domainWidth;
-1127 |   const xMax = xMin + domainWidth / transform.scale;
-1128 | 
-1129 |   const yMax =
-1130 |     yExtent[1] + (transform.y / transform.scale / innerHeight) * domainHeight;
-1131 |   const yMin = yMax - domainHeight / transform.scale;
-1132 | 
-1133 |   return { xMin, xMax, yMin, yMax };
-1134 | }
-1135 | 
-1136 | function clampTransform(transform, innerWidth, innerHeight) {
-1137 |   const scale = transform.scale;
-1138 | 
-1139 |   if (scale <= MIN_ZOOM_SCALE) {
-1140 |     return { scale: 1, x: 0, y: 0 };
-1141 |   }
-1142 | 
-1143 |   const scaledWidth = innerWidth * scale;
-1144 |   const scaledHeight = innerHeight * scale;
-1145 | 
-1146 |   let x = transform.x;
-1147 |   let y = transform.y;
-1148 | 
-1149 |   if (scaledWidth <= innerWidth) {
-1150 |     x = (innerWidth - scaledWidth) / 2;
-1151 |   } else {
-1152 |     x = Math.min(0, Math.max(innerWidth - scaledWidth, x));
-1153 |   }
-1154 | 
-1155 |   if (scaledHeight <= innerHeight) {
-1156 |     y = (innerHeight - scaledHeight) / 2;
-1157 |   } else {
-1158 |     y = Math.min(0, Math.max(innerHeight - scaledHeight, y));
-1159 |   }
-1160 | 
-1161 |   return { scale, x, y };
-1162 | }
-1163 | 
-1164 | function clamp(value, min, max) {
-1165 |   return Math.max(min, Math.min(max, value));
-1166 | }
-1167 | 
-1168 | function convertBrushToTransform(
-1169 |   brushPixelRect,
-1170 |   currentTransform,
-1171 |   plotInnerWidth,
-1172 |   plotInnerHeight,
-1173 | ) {
-1174 |   const contentX0 =
-1175 |     (brushPixelRect.x - currentTransform.x) / currentTransform.scale;
-1176 |   const contentY0 =
-1177 |     (brushPixelRect.y - currentTransform.y) / currentTransform.scale;
-1178 |   const contentBrushWidth = brushPixelRect.width / currentTransform.scale;
-1179 |   const contentBrushHeight = brushPixelRect.height / currentTransform.scale;
-1180 | 
-1181 |   const fitScaleX = plotInnerWidth / contentBrushWidth;
-1182 |   const fitScaleY = plotInnerHeight / contentBrushHeight;
-1183 |   const newScale = clamp(Math.min(fitScaleX, fitScaleY), ZOOM_MIN, ZOOM_MAX);
-1184 | 
-1185 |   if (newScale <= MIN_ZOOM_SCALE) {
-1186 |     return { scale: 1, x: 0, y: 0 };
-1187 |   }
-1188 | 
-1189 |   const rawX = -contentX0 * newScale;
-1190 |   const rawY = -contentY0 * newScale;
-1191 | 
-1192 |   return clampTransform(
-1193 |     { scale: newScale, x: rawX, y: rawY },
-1194 |     plotInnerWidth,
-1195 |     plotInnerHeight,
-1196 |   );
-1197 | }
-1198 | 
-1199 | function formatTick(value) {
-1200 |   if (Number.isInteger(value)) return String(value);
+1052 |           <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
+1053 |             <rect
+1054 |               x={0}
+1055 |               y={0}
+1056 |               width={innerWidth}
+1057 |               height={innerHeight}
+1058 |               fill="#16213e"
+1059 |             />
+1060 | 
+1061 |             <AxisGrid {...axisProps} />
+1062 | 
+1063 |             <AxisLabels {...axisProps} />
+1064 | 
+1065 |             <g clipPath={`url(#${clipId})`}>
+1066 |               <g transform={contentTransform}></g>
+1067 |             </g>
+1068 | 
+1069 |             <rect
+1070 |               x={0}
+1071 |               y={0}
+1072 |               width={innerWidth}
+1073 |               height={innerHeight}
+1074 |               fill="transparent"
+1075 |               stroke="#555"
+1076 |               pointerEvents="none"
+1077 |             />
+1078 |           </g>
+1079 |         </svg>
+1080 | 
+1081 |         {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
+1082 |           <svg
+1083 |             width={containerWidth}
+1084 |             height={height}
+1085 |             style={{
+1086 |               position: "absolute",
+1087 |               top: 0,
+1088 |               left: 0,
+1089 |               pointerEvents: "none",
+1090 |               zIndex: 5,
+1091 |             }}
+1092 |           >
+1093 |             <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
+1094 |               <rect
+1095 |                 x={brushRect.x}
+1096 |                 y={brushRect.y}
+1097 |                 width={brushRect.width}
+1098 |                 height={brushRect.height}
+1099 |                 fill={BRUSH_FILL}
+1100 |                 stroke={BRUSH_STROKE}
+1101 |                 strokeWidth={BRUSH_STROKE_WIDTH}
+1102 |                 rx={2}
+1103 |                 ry={2}
+1104 |               />
+1105 |             </g>
+1106 |           </svg>
+1107 |         )}
+1108 |       </div>
+1109 | 
+1110 |       <TooltipOverlay
+1111 |         hoveredPoint={hoveredPoint}
+1112 |         tooltipRef={tooltipRef}
+1113 |         position={tooltipPosition}
+1114 |       />
+1115 |     </div>
+1116 |   );
+1117 | }
+1118 | 
+1119 | const AxisGrid = memo(function AxisGrid({
+1120 |   xTicks,
+1121 |   yTicks,
+1122 |   xTickScale,
+1123 |   yTickScale,
+1124 |   innerWidth,
+1125 |   innerHeight,
+1126 | }) {
+1127 |   return (
+1128 |     <>
+1129 |       {xTicks.map((tick, index) => {
+1130 |         const x = xTickScale(tick);
+1131 |         return (
+1132 |           <line
+1133 |             key={`xgrid-${index}`}
+1134 |             x1={x}
+1135 |             y1={0}
+1136 |             x2={x}
+1137 |             y2={innerHeight}
+1138 |             stroke="#2a2a3e"
+1139 |             strokeDasharray="3 3"
+1140 |           />
+1141 |         );
+1142 |       })}
+1143 | 
+1144 |       {yTicks.map((tick, index) => {
+1145 |         const y = yTickScale(tick);
+1146 |         return (
+1147 |           <line
+1148 |             key={`ygrid-${index}`}
+1149 |             x1={0}
+1150 |             y1={y}
+1151 |             x2={innerWidth}
+1152 |             y2={y}
+1153 |             stroke="#2a2a3e"
+1154 |             strokeDasharray="3 3"
+1155 |           />
+1156 |         );
+1157 |       })}
+1158 |     </>
+1159 |   );
+1160 | });
+1161 | 
+1162 | const AxisLabels = memo(function AxisLabels({
+1163 |   xTicks,
+1164 |   yTicks,
+1165 |   xTickScale,
+1166 |   yTickScale,
+1167 |   innerHeight,
+1168 | }) {
+1169 |   return (
+1170 |     <>
+1171 |       {xTicks.map((tick, index) => {
+1172 |         const x = xTickScale(tick);
+1173 |         return (
+1174 |           <text
+1175 |             key={`xlabel-${index}`}
+1176 |             x={x}
+1177 |             y={innerHeight + 18}
+1178 |             fill="#888"
+1179 |             fontSize="11"
+1180 |             textAnchor="middle"
+1181 |           >
+1182 |             {formatTick(tick)}
+1183 |           </text>
+1184 |         );
+1185 |       })}
+1186 | 
+1187 |       {yTicks.map((tick, index) => {
+1188 |         const y = yTickScale(tick);
+1189 |         return (
+1190 |           <text
+1191 |             key={`ylabel-${index}`}
+1192 |             x={-8}
+1193 |             y={y + 4}
+1194 |             fill="#888"
+1195 |             fontSize="11"
+1196 |             textAnchor="end"
+1197 |           >
+1198 |             {formatTick(tick)}
+1199 |           </text>
+1200 |         );
 ```
 
 ### Chunk 7/7
 
 ```jsx
-1201 |   return parseFloat(Number(value).toPrecision(4)).toString();
-1202 | }
-1203 | 
-1204 | export default RechartsPlotter;
+1201 |       })}
+1202 |     </>
+1203 |   );
+1204 | });
 1205 | 
+1206 | function extentWithPaddingFromPoints(points, accessor) {
+1207 |   if (!points.length) return [0, 1];
+1208 | 
+1209 |   let min = Infinity;
+1210 |   let max = -Infinity;
+1211 | 
+1212 |   for (const point of points) {
+1213 |     const value = accessor(point);
+1214 | 
+1215 |     if (value < min) min = value;
+1216 |     if (value > max) max = value;
+1217 |   }
+1218 | 
+1219 |   const span = max - min;
+1220 |   const pad = span === 0 ? 5 : Math.max(span * 0.18, 1);
+1221 | 
+1222 |   return [min - pad, max + pad];
+1223 | }
+1224 | 
+1225 | function computeVisibleDomain(
+1226 |   xExtent,
+1227 |   yExtent,
+1228 |   transform,
+1229 |   contentWidth,
+1230 |   contentHeight,
+1231 |   viewWidth,
+1232 |   viewHeight,
+1233 | ) {
+1234 |   const domainWidth = xExtent[1] - xExtent[0];
+1235 |   const domainHeight = yExtent[1] - yExtent[0];
+1236 | 
+1237 |   const xMin =
+1238 |     xExtent[0] - (transform.x / transform.scale / contentWidth) * domainWidth;
+1239 |   const xMax =
+1240 |     xMin + (viewWidth / transform.scale / contentWidth) * domainWidth;
+1241 | 
+1242 |   const yMax =
+1243 |     yExtent[1] + (transform.y / transform.scale / contentHeight) * domainHeight;
+1244 |   const yMin =
+1245 |     yMax - (viewHeight / transform.scale / contentHeight) * domainHeight;
+1246 | 
+1247 |   return { xMin, xMax, yMin, yMax };
+1248 | }
+1249 | 
+1250 | function clampTransform(
+1251 |   transform,
+1252 |   contentWidth,
+1253 |   contentHeight,
+1254 |   viewWidth,
+1255 |   viewHeight,
+1256 | ) {
+1257 |   const scale = transform.scale;
+1258 | 
+1259 |   const scaledWidth = contentWidth * scale;
+1260 |   const scaledHeight = contentHeight * scale;
+1261 | 
+1262 |   let x = transform.x;
+1263 |   let y = transform.y;
+1264 | 
+1265 |   if (scaledWidth <= viewWidth) {
+1266 |     x = (viewWidth - scaledWidth) / 2;
+1267 |   } else {
+1268 |     x = Math.min(0, Math.max(viewWidth - scaledWidth, x));
+1269 |   }
+1270 | 
+1271 |   if (scaledHeight <= viewHeight) {
+1272 |     y = (viewHeight - scaledHeight) / 2;
+1273 |   } else {
+1274 |     y = Math.min(0, Math.max(viewHeight - scaledHeight, y));
+1275 |   }
+1276 | 
+1277 |   return { scale, x, y };
+1278 | }
+1279 | 
+1280 | function clamp(value, min, max) {
+1281 |   return Math.max(min, Math.min(max, value));
+1282 | }
+1283 | 
+1284 | function convertBrushToTransform(
+1285 |   brushPixelRect,
+1286 |   currentTransform,
+1287 |   contentWidth,
+1288 |   contentHeight,
+1289 |   plotInnerWidth,
+1290 |   plotInnerHeight,
+1291 |   minScale,
+1292 | ) {
+1293 |   const contentX0 =
+1294 |     (brushPixelRect.x - currentTransform.x) / currentTransform.scale;
+1295 |   const contentY0 =
+1296 |     (brushPixelRect.y - currentTransform.y) / currentTransform.scale;
+1297 |   const contentBrushWidth = brushPixelRect.width / currentTransform.scale;
+1298 |   const contentBrushHeight = brushPixelRect.height / currentTransform.scale;
+1299 | 
+1300 |   const fitScaleX = plotInnerWidth / contentBrushWidth;
+1301 |   const fitScaleY = plotInnerHeight / contentBrushHeight;
+1302 |   const newScale = clamp(Math.min(fitScaleX, fitScaleY), minScale, ZOOM_MAX);
+1303 | 
+1304 |   const rawX = -contentX0 * newScale;
+1305 |   const rawY = -contentY0 * newScale;
+1306 | 
+1307 |   return clampTransform(
+1308 |     { scale: newScale, x: rawX, y: rawY },
+1309 |     contentWidth,
+1310 |     contentHeight,
+1311 |     plotInnerWidth,
+1312 |     plotInnerHeight,
+1313 |   );
+1314 | }
+1315 | 
+1316 | function formatTick(value) {
+1317 |   if (Number.isInteger(value)) return String(value);
+1318 |   return parseFloat(Number(value).toPrecision(4)).toString();
+1319 | }
+1320 | 
+1321 | export default RechartsPlotter;
+1322 | 
 ```
 
 
@@ -7136,7 +7245,7 @@ imagdPlotting
 ---
 
 ## 📄 src\lib\constants.js
-**hash:** `6b86f257`
+**hash:** `18d38633`
 
 ### Chunk 1/1
 
@@ -7155,49 +7264,50 @@ imagdPlotting
   12 | export const MIN_IMAGES_PER_POINT = 1;
   13 | export const MAX_IMAGES_PER_POINT = 8;
   14 | 
-  15 | export const DATA_POINT_LIMITS = {
-  16 |   min: 1,
-  17 |   max: 1000,
-  18 |   defaultCount: 100,
-  19 | };
-  20 | 
-  21 | export const CELL_SIZE = 50;
-  22 | export const IMAGE_PADDING = 0.9;
+  15 | // Allowed images-per-point values shown in the selector.
+  16 | export const IMAGE_COUNT_OPTIONS = [1, 2, 4, 6, 8];
+  17 | 
+  18 | export const DATA_POINT_LIMITS = {
+  19 |   min: 1,
+  20 |   max: 1000,
+  21 |   defaultCount: 100,
+  22 | };
   23 | 
-  24 | export const ADAPTIVE_CELL_SIZE = {
-  25 |   max: 50,
-  26 |   min: 4,
-  27 |   gapRatio: 0.55,
-  28 |   collapseThreshold: 0,
-  29 | };
-  30 | 
-  31 | export const PLOT_DIMENSIONS = {
-  32 |   width: 900,
-  33 |   height: 600,
-  34 | };
-  35 | 
-  36 | export const PLOT_MARGIN = {
-  37 |   top: 20,
-  38 |   right: 20,
-  39 |   bottom: 40,
-  40 |   left: 50,
-  41 | };
-  42 | 
-  43 | export const DATA_URL = "/data/data.json";
-  44 | 
-  45 | export const BRUSH_ZOOM = {
-  46 |   fill: "rgba(68, 147, 255, 0.15)",
-  47 |   stroke: "#4493ff",
-  48 |   strokeWidth: 1.5,
-  49 |   minimumSelectionPixels: 5,
-  50 | };
-  51 | 
-  52 | export const ZOOM_SCALE_FACTOR = 1.5;
-  53 | 
-  54 | export const WHEEL_ZOOM_SENSITIVITY = 0.002;
-  55 | 
-  56 | export const MAX_RENDER_IMAGES = 50000;
-  57 | 
+  24 | export const CELL_SIZE = 50;
+  25 | export const IMAGE_PADDING = 0.9;
+  26 | 
+  27 | export const ADAPTIVE_CELL_SIZE = {
+  28 |   max: 50,
+  29 |   min: 4,
+  30 |   gapRatio: 0.55,
+  31 |   collapseThreshold: 0,
+  32 | };
+  33 | 
+  34 | export const PLOT_DIMENSIONS = {
+  35 |   width: 900,
+  36 |   height: 600,
+  37 | };
+  38 | 
+  39 | export const PLOT_MARGIN = {
+  40 |   top: 20,
+  41 |   right: 20,
+  42 |   bottom: 40,
+  43 |   left: 50,
+  44 | };
+  45 | 
+  46 | export const DATA_URL = "/data/data.json";
+  47 | 
+  48 | export const BRUSH_ZOOM = {
+  49 |   fill: "rgba(68, 147, 255, 0.15)",
+  50 |   stroke: "#4493ff",
+  51 |   strokeWidth: 1.5,
+  52 |   minimumSelectionPixels: 5,
+  53 | };
+  54 | 
+  55 | export const ZOOM_SCALE_FACTOR = 1.5;
+  56 | export const WHEEL_ZOOM_SENSITIVITY = 0.002;
+  57 | export const MAX_RENDER_IMAGES = 50000;
+  58 | 
 ```
 
 
@@ -7666,102 +7776,107 @@ imagdPlotting
 ---
 
 ## 📄 src\lib\gridLayout.js
-**hash:** `79e51971`
+**hash:** `57fd814e`
 
 ### Chunk 1/1
 
 ```javascript
-   1 | import { MAX_RENDER_IMAGES, IMAGE_PADDING } from "./constants";
+   1 | import { MAX_RENDER_IMAGES } from "./constants";
    2 | 
    3 | /**
-   4 |  * Computes deterministic grid offsets for ANY image count.
-   5 |  */
-   6 | export function computeGridOffsets(cellWidth, cellHeight, imageCount) {
-   7 |   const safeImageCount = sanitizeImageCount(imageCount);
-   8 | 
-   9 |   const columns = Math.ceil(Math.sqrt(safeImageCount));
-  10 |   const rows = Math.ceil(safeImageCount / columns);
-  11 | 
-  12 |   const subWidth = Math.max(2, cellWidth - columns * IMAGE_PADDING);
-  13 | 
-  14 |   const subHeight = Math.max(2, cellHeight - rows * IMAGE_PADDING);
+   4 |  * Chooses a column/row split for a given image count.
+   5 |  * 1 -> 1x1, 2 -> 2x1, and everything larger packs into exactly 2 rows
+   6 |  * (4 -> 2x2, 6 -> 3x2, 8 -> 4x2). Keeps clusters compact and centered.
+   7 |  */
+   8 | function chooseGrid(count) {
+   9 |   if (count <= 1) return { columns: 1, rows: 1 };
+  10 |   if (count <= 2) return { columns: count, rows: 1 };
+  11 |   const rows = 2;
+  12 |   const columns = Math.ceil(count / rows);
+  13 |   return { columns, rows };
+  14 | }
   15 | 
-  16 |   const offsets = [];
-  17 | 
-  18 |   const centeredOffsetX = ((columns - 1) * subWidth) / 2;
-  19 | 
-  20 |   const centeredOffsetY = ((rows - 1) * subHeight) / 2;
-  21 | 
-  22 |   for (let index = 0; index < safeImageCount; index++) {
-  23 |     const column = index % columns;
-  24 |     const row = Math.floor(index / columns);
-  25 | 
-  26 |     const offsetX = column * subWidth - centeredOffsetX;
+  16 | /**
+  17 |  * Computes deterministic grid offsets for a per-point image cluster.
+  18 |  *
+  19 |  * The whole cluster is sized to fit inside cellWidth x cellHeight and is
+  20 |  * centered on (0,0). Sub-images are square and tile edge-to-edge with no gaps
+  21 |  * between rows or columns. Because the cluster never exceeds the cell, and the
+  22 |  * cell is kept smaller than the nearest-neighbour distance, clusters from
+  23 |  * different data points never overlap.
+  24 |  */
+  25 | export function computeGridOffsets(cellWidth, cellHeight, imageCount) {
+  26 |   const safeImageCount = sanitizeImageCount(imageCount);
   27 | 
-  28 |     const offsetY = row * subHeight - centeredOffsetY;
+  28 |   const { columns, rows } = chooseGrid(safeImageCount);
   29 | 
-  30 |     offsets.push({
-  31 |       offsetX,
-  32 |       offsetY,
-  33 |       width: subWidth,
-  34 |       height: subHeight,
-  35 |     });
-  36 |   }
+  30 |   // Square sub-image: limited by whichever dimension is tighter.
+  31 |   const sub = Math.max(2, Math.min(cellWidth / columns, cellHeight / rows));
+  32 | 
+  33 |   const clusterWidth = columns * sub;
+  34 |   const clusterHeight = rows * sub;
+  35 | 
+  36 |   const offsets = [];
   37 | 
-  38 |   return offsets;
-  39 | }
-  40 | 
-  41 | /**
-  42 |  * Computes deterministic image positions.
-  43 |  */
-  44 | export function computeImagePositions(
-  45 |   centerX,
-  46 |   centerY,
-  47 |   cellWidth,
-  48 |   cellHeight,
-  49 |   imageCount,
-  50 | ) {
-  51 |   const safeImageCount = sanitizeImageCount(imageCount);
+  38 |   for (let index = 0; index < safeImageCount; index++) {
+  39 |     const column = index % columns;
+  40 |     const row = Math.floor(index / columns);
+  41 | 
+  42 |     const offsetX = (column + 0.5) * sub - clusterWidth / 2;
+  43 |     const offsetY = (row + 0.5) * sub - clusterHeight / 2;
+  44 | 
+  45 |     offsets.push({
+  46 |       offsetX,
+  47 |       offsetY,
+  48 |       width: sub,
+  49 |       height: sub,
+  50 |     });
+  51 |   }
   52 | 
-  53 |   const offsets = computeGridOffsets(cellWidth, cellHeight, safeImageCount);
-  54 | 
-  55 |   const positions = [];
-  56 | 
-  57 |   for (let index = 0; index < offsets.length; index++) {
-  58 |     if (positions.length >= MAX_RENDER_IMAGES) {
-  59 |       break;
-  60 |     }
-  61 | 
-  62 |     const offset = offsets[index];
-  63 | 
-  64 |     positions.push({
-  65 |       imageIndex: index,
-  66 | 
-  67 |       x: centerX + offset.offsetX - offset.width / 2,
-  68 | 
-  69 |       y: centerY + offset.offsetY - offset.height / 2,
-  70 | 
-  71 |       width: offset.width,
-  72 |       height: offset.height,
-  73 |     });
-  74 |   }
-  75 | 
-  76 |   return positions;
-  77 | }
+  53 |   return offsets;
+  54 | }
+  55 | 
+  56 | /**
+  57 |  * Computes deterministic image positions (top-left x/y) for one data point.
+  58 |  */
+  59 | export function computeImagePositions(
+  60 |   centerX,
+  61 |   centerY,
+  62 |   cellWidth,
+  63 |   cellHeight,
+  64 |   imageCount,
+  65 | ) {
+  66 |   const safeImageCount = sanitizeImageCount(imageCount);
+  67 | 
+  68 |   const offsets = computeGridOffsets(cellWidth, cellHeight, safeImageCount);
+  69 | 
+  70 |   const positions = [];
+  71 | 
+  72 |   for (let index = 0; index < offsets.length; index++) {
+  73 |     if (positions.length >= MAX_RENDER_IMAGES) {
+  74 |       break;
+  75 |     }
+  76 | 
+  77 |     const offset = offsets[index];
   78 | 
-  79 | /**
-  80 |  * Normalizes image counts.
-  81 |  */
-  82 | function sanitizeImageCount(imageCount) {
-  83 |   const parsed = Number(imageCount);
-  84 | 
-  85 |   if (Number.isNaN(parsed)) {
-  86 |     return 1;
-  87 |   }
-  88 | 
-  89 |   return Math.max(1, Math.min(1000, Math.floor(parsed)));
-  90 | }
-  91 | 
+  79 |     positions.push({
+  80 |       imageIndex: index,
+  81 |       x: centerX + offset.offsetX - offset.width / 2,
+  82 |       y: centerY + offset.offsetY - offset.height / 2,
+  83 |       width: offset.width,
+  84 |       height: offset.height,
+  85 |     });
+  86 |   }
+  87 | 
+  88 |   return positions;
+  89 | }
+  90 | 
+  91 | function sanitizeImageCount(imageCount) {
+  92 |   const parsed = Number(imageCount);
+  93 |   if (Number.isNaN(parsed)) return 1;
+  94 |   return Math.max(1, Math.min(1000, Math.floor(parsed)));
+  95 | }
+  96 | 
 ```
 
 

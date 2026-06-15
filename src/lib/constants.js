@@ -12,6 +12,9 @@ export const DISABLED_LIBRARIES = ["DeckGL", "ECharts"];
 export const MIN_IMAGES_PER_POINT = 1;
 export const MAX_IMAGES_PER_POINT = 8;
 
+// Allowed images-per-point values shown in the selector.
+export const IMAGE_COUNT_OPTIONS = [1, 2, 4, 6, 8];
+
 export const DATA_POINT_LIMITS = {
   min: 1,
   max: 1000,
@@ -50,7 +53,5 @@ export const BRUSH_ZOOM = {
 };
 
 export const ZOOM_SCALE_FACTOR = 1.5;
-
 export const WHEEL_ZOOM_SENSITIVITY = 0.002;
-
 export const MAX_RENDER_IMAGES = 50000;

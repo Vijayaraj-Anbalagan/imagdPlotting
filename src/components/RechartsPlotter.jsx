@@ -1,5 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable react-hooks/refs */
 import {
   useState,
   useMemo,
@@ -9,6 +7,7 @@ import {
   memo,
   useLayoutEffect,
 } from "react";
+import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import { usePlotterData } from "../lib/plotterData";
 import {
@@ -34,8 +33,7 @@ import { useThrottledCallback } from "../lib/debouncedHooks";
 import { computeImagePositions } from "../lib/gridLayout";
 
 const ZOOM_STEP = 1.5;
-const ZOOM_MIN = 1;
-const MIN_ZOOM_SCALE = 1.001;
+const ZOOM_EPS = 0.001;
 const ZOOM_MAX = 250;
 const BRUSH_MIN_PIXELS = 5;
 const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
@@ -51,8 +49,9 @@ const TooltipOverlay = memo(function TooltipOverlay({
   position,
 }) {
   if (!hoveredPoint) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div
       ref={tooltipRef}
       style={{
@@ -72,7 +71,8 @@ const TooltipOverlay = memo(function TooltipOverlay({
       <div>{hoveredPoint.label}</div>
       <div>X: {hoveredPoint.x}</div>
       <div>Y: {hoveredPoint.y}</div>
-    </div>
+    </div>,
+    document.body,
   );
 });
 
@@ -122,6 +122,7 @@ function SvgImageLayer({
             y={pos.y}
             width={pos.width}
             height={pos.height}
+            preserveAspectRatio="none"
             data-point-id={point.id}
           />
         ));
@@ -216,24 +217,11 @@ function RechartsCanvas({
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
   const initialViewportRef = useRef(getChartViewport(chartId));
 
-  const initialScale = Math.max(
-    initialViewportRef.current.scale || 1,
-    ZOOM_MIN,
-  );
-
-  const [transform, setTransform] = useState(() =>
-    initialScale <= MIN_ZOOM_SCALE
-      ? {
-          scale: 1,
-          x: 0,
-          y: 0,
-        }
-      : {
-          scale: initialScale,
-          x: initialViewportRef.current.translateX || 0,
-          y: initialViewportRef.current.translateY || 0,
-        },
-  );
+  const [transform, setTransform] = useState(() => ({
+    scale: initialViewportRef.current.scale || 1,
+    x: initialViewportRef.current.translateX || 0,
+    y: initialViewportRef.current.translateY || 0,
+  }));
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const tooltipRef = useRef(null);
   const [brushRect, setBrushRect] = useState(null);
@@ -273,21 +261,11 @@ function RechartsCanvas({
 
   useLayoutEffect(() => {
     const saved = getChartViewport(chartId);
-    const savedScale = Math.max(saved?.scale ?? 1, ZOOM_MIN);
-
-    setTransform(
-      savedScale <= MIN_ZOOM_SCALE
-        ? {
-            scale: 1,
-            x: 0,
-            y: 0,
-          }
-        : {
-            scale: savedScale,
-            x: saved?.translateX ?? 0,
-            y: saved?.translateY ?? 0,
-          },
-    );
+    setTransform({
+      scale: saved?.scale ?? 1,
+      x: saved?.translateX ?? 0,
+      y: saved?.translateY ?? 0,
+    });
   }, [chartId]);
 
   const height = PLOT_DIMENSIONS.height;
@@ -300,21 +278,52 @@ function RechartsCanvas({
     240,
   );
 
-  const normalizedPoints = useMemo(() => {
-    const xScale = xGap / BASE_IMAGE_GAP_X;
-    const yScale = yGap / BASE_IMAGE_GAP_Y;
+  // Gap spreads images apart: the content box grows with the gap (matching the
+  // D3 plotter's range model), while the viewport stays innerWidth/innerHeight.
+  const xSpacingScale = xGap / BASE_IMAGE_GAP_X;
+  const ySpacingScale = yGap / BASE_IMAGE_GAP_Y;
+  const contentWidth = innerWidth * xSpacingScale;
+  const contentHeight = innerHeight * ySpacingScale;
 
+  // The scale at which the whole content fits inside the viewport. No cap: if
+  // content is larger than the viewport we zoom out to fit, and if it is
+  // smaller we zoom in so it fills the viewport ("contain" behaviour).
+  const fitScale = Math.min(
+    innerWidth / contentWidth,
+    innerHeight / contentHeight,
+  );
+
+  // The "home"/reset view: fully fitted and centered.
+  const homeTransform = useMemo(
+    () =>
+      clampTransform(
+        { scale: fitScale, x: 0, y: 0 },
+        contentWidth,
+        contentHeight,
+        innerWidth,
+        innerHeight,
+      ),
+    [fitScale, contentWidth, contentHeight, innerWidth, innerHeight],
+  );
+
+  // Whenever the gap or viewport changes, reset to the fitted home view so
+  // all points are visible at 100 % — same behaviour as pressing Reset.
+  useEffect(() => {
+    setTransform(homeTransform);
+  }, [homeTransform]);
+
+  const normalizedPoints = useMemo(() => {
     return plotterPoints.map((point) => ({
       id: point.id,
       x: point.x,
       y: point.y,
-      scaledX: point.x * xScale,
-      scaledY: point.y * yScale,
+      scaledX: point.x,
+      scaledY: point.y,
       image: point.image,
       label: point.label,
       meta: point.meta,
     }));
-  }, [plotterPoints, xGap, yGap]);
+  }, [plotterPoints]);
 
   const xExtent = useMemo(
     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledX),
@@ -327,7 +336,7 @@ function RechartsCanvas({
   );
 
   const { baseXScale, baseYScale } = useMemo(() => {
-    const scaleKey = `${xExtent[0]}-${xExtent[1]}-${yExtent[0]}-${yExtent[1]}-${innerWidth}-${innerHeight}`;
+    const scaleKey = `${xExtent[0]}-${xExtent[1]}-${yExtent[0]}-${yExtent[1]}-${contentWidth}-${contentHeight}`;
 
     if (
       cachedScalesRef.current.key === scaleKey &&
@@ -340,12 +349,12 @@ function RechartsCanvas({
       };
     }
 
-    const xScale = d3.scaleLinear().domain(xExtent).range([0, innerWidth]);
-    const yScale = d3.scaleLinear().domain(yExtent).range([innerHeight, 0]);
+    const xScale = d3.scaleLinear().domain(xExtent).range([0, contentWidth]);
+    const yScale = d3.scaleLinear().domain(yExtent).range([contentHeight, 0]);
 
     cachedScalesRef.current = { key: scaleKey, xScale, yScale };
     return { baseXScale: xScale, baseYScale: yScale };
-  }, [xExtent, yExtent, innerWidth, innerHeight]);
+  }, [xExtent, yExtent, contentWidth, contentHeight]);
 
   const quadtree = useMemo(() => {
     if (!normalizedPoints.length) return null;
@@ -394,10 +403,20 @@ function RechartsCanvas({
         xExtent,
         yExtent,
         transform,
+        contentWidth,
+        contentHeight,
         innerWidth,
         innerHeight,
       ),
-    [xExtent, yExtent, innerWidth, innerHeight, transform],
+    [
+      xExtent,
+      yExtent,
+      transform,
+      contentWidth,
+      contentHeight,
+      innerWidth,
+      innerHeight,
+    ],
   );
 
   const xTicks = useMemo(() => {
@@ -527,11 +546,7 @@ function RechartsCanvas({
   const zoomTo = useCallback(
     (nextScale, anchorX, anchorY) => {
       setTransform((prev) => {
-        const clampedScale = clamp(nextScale, ZOOM_MIN, ZOOM_MAX);
-
-        if (clampedScale <= MIN_ZOOM_SCALE) {
-          return { scale: 1, x: 0, y: 0 };
-        }
+        const clampedScale = clamp(nextScale, fitScale, ZOOM_MAX);
 
         const pivotX = Number.isFinite(anchorX) ? anchorX : innerWidth / 2;
         const pivotY = Number.isFinite(anchorY) ? anchorY : innerHeight / 2;
@@ -543,12 +558,14 @@ function RechartsCanvas({
 
         return clampTransform(
           { scale: clampedScale, x: nextX, y: nextY },
+          contentWidth,
+          contentHeight,
           innerWidth,
           innerHeight,
         );
       });
     },
-    [innerWidth, innerHeight],
+    [innerWidth, innerHeight, contentWidth, contentHeight, fitScale],
   );
 
   const handleZoomIn = useCallback(() => {
@@ -561,7 +578,7 @@ function RechartsCanvas({
   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
 
   const handleZoomOut = useCallback(() => {
-    if (transform.scale <= MIN_ZOOM_SCALE) {
+    if (transform.scale <= fitScale + ZOOM_EPS) {
       return;
     }
 
@@ -572,7 +589,7 @@ function RechartsCanvas({
     });
 
     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
-  }, [transform.scale, zoomTo, innerWidth, innerHeight]);
+  }, [transform.scale, zoomTo, innerWidth, innerHeight, fitScale]);
 
   const handleReset = useCallback(() => {
     logChartInteractionEvent({
@@ -580,9 +597,9 @@ function RechartsCanvas({
       visualizationLibrary: "Recharts",
       interactionSource: "button",
     });
-    setTransform({ scale: 1, x: 0, y: 0 });
+    setTransform(homeTransform);
     setHoveredPoint(null);
-  }, []);
+  }, [homeTransform]);
 
   const handleWheel = useCallback(
     (event) => {
@@ -608,7 +625,7 @@ function RechartsCanvas({
 
       const isZoomIn = event.deltaY < 0;
 
-      if (!isZoomIn && transform.scale <= MIN_ZOOM_SCALE) {
+      if (!isZoomIn && transform.scale <= fitScale + ZOOM_EPS) {
         return;
       }
 
@@ -621,11 +638,7 @@ function RechartsCanvas({
       const factor = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
 
       setTransform((prev) => {
-        const clampedScale = clamp(prev.scale * factor, ZOOM_MIN, ZOOM_MAX);
-
-        if (clampedScale <= MIN_ZOOM_SCALE) {
-          return { scale: 1, x: 0, y: 0 };
-        }
+        const clampedScale = clamp(prev.scale * factor, fitScale, ZOOM_MAX);
 
         const nextX =
           prev.x - (localX - prev.x) * (clampedScale / prev.scale - 1);
@@ -633,12 +646,21 @@ function RechartsCanvas({
           prev.y - (localY - prev.y) * (clampedScale / prev.scale - 1);
         return clampTransform(
           { scale: clampedScale, x: nextX, y: nextY },
+          contentWidth,
+          contentHeight,
           innerWidth,
           innerHeight,
         );
       });
     },
-    [innerWidth, innerHeight, transform.scale],
+    [
+      innerWidth,
+      innerHeight,
+      contentWidth,
+      contentHeight,
+      transform.scale,
+      fitScale,
+    ],
   );
 
   const handlePointerDown = useCallback(
@@ -659,7 +681,7 @@ function RechartsCanvas({
       }
 
       if (isPanMode) {
-        if (transform.scale <= MIN_ZOOM_SCALE) {
+        if (transform.scale <= fitScale + ZOOM_EPS) {
           return;
         }
         logChartInteractionEvent({
@@ -685,7 +707,7 @@ function RechartsCanvas({
       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
-    [innerWidth, innerHeight, transform, isPanMode],
+    [innerWidth, innerHeight, fitScale, transform, isPanMode],
   );
 
   const handlePointerMove = useCallback(
@@ -721,10 +743,10 @@ function RechartsCanvas({
           return;
         }
 
-        if (dragState.startTransform.scale <= MIN_ZOOM_SCALE) {
+        if (dragState.startTransform.scale <= fitScale + ZOOM_EPS) {
           dragRef.current = createInitialDragState();
           setIsDragging(false);
-          setTransform({ scale: 1, x: 0, y: 0 });
+          setTransform(homeTransform);
           return;
         }
 
@@ -737,6 +759,8 @@ function RechartsCanvas({
             x: dragState.startTransform.x + dx,
             y: dragState.startTransform.y + dy,
           },
+          contentWidth,
+          contentHeight,
           innerWidth,
           innerHeight,
         );
@@ -799,6 +823,10 @@ function RechartsCanvas({
     [
       innerWidth,
       innerHeight,
+      contentWidth,
+      contentHeight,
+      fitScale,
+      homeTransform,
       scheduleTransformUpdate,
       transform,
       adaptiveCellSizeForRender,
@@ -824,15 +852,14 @@ function RechartsCanvas({
           const newTransform = convertBrushToTransform(
             brushRect,
             transform,
+            contentWidth,
+            contentHeight,
             innerWidth,
             innerHeight,
+            fitScale,
           );
 
-          if (newTransform.scale <= MIN_ZOOM_SCALE) {
-            setTransform({ scale: 1, x: 0, y: 0 });
-          } else {
-            setTransform(newTransform);
-          }
+          setTransform(newTransform);
         }
 
         brushStartRef.current = null;
@@ -844,14 +871,23 @@ function RechartsCanvas({
 
       const dragState = dragRef.current;
 
-      if (dragState?.dragging && transform.scale <= MIN_ZOOM_SCALE) {
-        setTransform({ scale: 1, x: 0, y: 0 });
+      if (dragState?.dragging && transform.scale <= fitScale + ZOOM_EPS) {
+        setTransform(homeTransform);
       }
 
       dragRef.current = createInitialDragState();
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     },
-    [brushRect, transform, innerWidth, innerHeight],
+    [
+      brushRect,
+      transform,
+      innerWidth,
+      innerHeight,
+      contentWidth,
+      contentHeight,
+      fitScale,
+      homeTransform,
+    ],
   );
 
   useEffect(() => {
@@ -896,9 +932,9 @@ function RechartsCanvas({
       visualizationLibrary: "Recharts",
       interactionSource: "double_click",
     });
-    setTransform({ scale: 1, x: 0, y: 0 });
+    setTransform(homeTransform);
     setHoveredPoint(null);
-  }, []);
+  }, [homeTransform]);
 
   const stageCursor = isPanMode
     ? isDragging
@@ -910,7 +946,7 @@ function RechartsCanvas({
   return (
     <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
       <ControlsLayer
-        zoomLevel={transform.scale}
+        zoomLevel={transform.scale / fitScale}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onReset={handleReset}
@@ -1179,46 +1215,52 @@ function computeVisibleDomain(
   xExtent,
   yExtent,
   transform,
-  innerWidth,
-  innerHeight,
+  contentWidth,
+  contentHeight,
+  viewWidth,
+  viewHeight,
 ) {
   const domainWidth = xExtent[1] - xExtent[0];
   const domainHeight = yExtent[1] - yExtent[0];
 
   const xMin =
-    xExtent[0] - (transform.x / transform.scale / innerWidth) * domainWidth;
-  const xMax = xMin + domainWidth / transform.scale;
+    xExtent[0] - (transform.x / transform.scale / contentWidth) * domainWidth;
+  const xMax =
+    xMin + (viewWidth / transform.scale / contentWidth) * domainWidth;
 
   const yMax =
-    yExtent[1] + (transform.y / transform.scale / innerHeight) * domainHeight;
-  const yMin = yMax - domainHeight / transform.scale;
+    yExtent[1] + (transform.y / transform.scale / contentHeight) * domainHeight;
+  const yMin =
+    yMax - (viewHeight / transform.scale / contentHeight) * domainHeight;
 
   return { xMin, xMax, yMin, yMax };
 }
 
-function clampTransform(transform, innerWidth, innerHeight) {
+function clampTransform(
+  transform,
+  contentWidth,
+  contentHeight,
+  viewWidth,
+  viewHeight,
+) {
   const scale = transform.scale;
 
-  if (scale <= MIN_ZOOM_SCALE) {
-    return { scale: 1, x: 0, y: 0 };
-  }
-
-  const scaledWidth = innerWidth * scale;
-  const scaledHeight = innerHeight * scale;
+  const scaledWidth = contentWidth * scale;
+  const scaledHeight = contentHeight * scale;
 
   let x = transform.x;
   let y = transform.y;
 
-  if (scaledWidth <= innerWidth) {
-    x = (innerWidth - scaledWidth) / 2;
+  if (scaledWidth <= viewWidth) {
+    x = (viewWidth - scaledWidth) / 2;
   } else {
-    x = Math.min(0, Math.max(innerWidth - scaledWidth, x));
+    x = Math.min(0, Math.max(viewWidth - scaledWidth, x));
   }
 
-  if (scaledHeight <= innerHeight) {
-    y = (innerHeight - scaledHeight) / 2;
+  if (scaledHeight <= viewHeight) {
+    y = (viewHeight - scaledHeight) / 2;
   } else {
-    y = Math.min(0, Math.max(innerHeight - scaledHeight, y));
+    y = Math.min(0, Math.max(viewHeight - scaledHeight, y));
   }
 
   return { scale, x, y };
@@ -1231,8 +1273,11 @@ function clamp(value, min, max) {
 function convertBrushToTransform(
   brushPixelRect,
   currentTransform,
+  contentWidth,
+  contentHeight,
   plotInnerWidth,
   plotInnerHeight,
+  minScale,
 ) {
   const contentX0 =
     (brushPixelRect.x - currentTransform.x) / currentTransform.scale;
@@ -1243,17 +1288,15 @@ function convertBrushToTransform(
 
   const fitScaleX = plotInnerWidth / contentBrushWidth;
   const fitScaleY = plotInnerHeight / contentBrushHeight;
-  const newScale = clamp(Math.min(fitScaleX, fitScaleY), ZOOM_MIN, ZOOM_MAX);
-
-  if (newScale <= MIN_ZOOM_SCALE) {
-    return { scale: 1, x: 0, y: 0 };
-  }
+  const newScale = clamp(Math.min(fitScaleX, fitScaleY), minScale, ZOOM_MAX);
 
   const rawX = -contentX0 * newScale;
   const rawY = -contentY0 * newScale;
 
   return clampTransform(
     { scale: newScale, x: rawX, y: rawY },
+    contentWidth,
+    contentHeight,
     plotInnerWidth,
     plotInnerHeight,
   );
