@@ -49,6 +49,25 @@ export function updateChartViewport(chartId, updates) {
   });
 }
 
+export function removeChartViewport(chartId) {
+  if (!chartId) return;
+  viewportStore.delete(chartId);
+}
+
+export function retainOnlyChartViewports(activeChartIds) {
+  const activeSet = new Set(activeChartIds);
+
+  for (const chartId of viewportStore.keys()) {
+    if (!activeSet.has(chartId)) {
+      viewportStore.delete(chartId);
+    }
+  }
+}
+
+export function getViewportStoreSize() {
+  return viewportStore.size;
+}
+
 /**
  * CLEAR ALL
  */

@@ -18,18 +18,20 @@ export function generateSyntheticPoints(totalPoints) {
     const column = index % columns;
     const row = Math.floor(index / columns);
 
-    syntheticPoints.push({
-      id: `synth-${index}`,
-      x: column * spacing,
-      y: row * spacing,
-      image: BASE_IMAGE_PATH,
-      label: `Point ${index + 1} (${column * spacing}, ${row * spacing})`,
-      meta: {
-        interval: column * spacing,
-        angle: row * spacing,
-        quality: parseFloat((0.7 + Math.random() * 0.25).toFixed(2)),
-      },
-    });
+    syntheticPoints.push(
+      Object.freeze({
+        id: `synth-${index}`,
+        x: column * spacing,
+        y: row * spacing,
+        image: BASE_IMAGE_PATH,
+        label: `Point ${index + 1}`,
+        meta: Object.freeze({
+          interval: column * spacing,
+          angle: row * spacing,
+          quality: parseFloat((0.7 + Math.random() * 0.25).toFixed(2)),
+        }),
+      }),
+    );
   }
 
   return syntheticPoints;

@@ -1,6 +1,6 @@
 # Repository Dump (AI Friendly)
 
-> Generated: 2026-06-05T09:54:02.126Z
+> Generated: 2026-06-15T10:35:47.557Z
 
 ## Folder Structure
 
@@ -23,6 +23,7 @@ imagdPlotting
 │   │   ├── DataPointCountControl.jsx
 │   │   ├── DeckGLPlotter.jsx
 │   │   ├── EChartsPlotter.jsx
+│   │   ├── ImageCanvasLayer.jsx
 │   │   ├── ImageCountSelector.jsx
 │   │   ├── KonvaPlotter.jsx
 │   │   ├── Navbar.jsx
@@ -33,11 +34,13 @@ imagdPlotting
 │   │   ├── chartInteractionLogger.js
 │   │   ├── chartViewportStore.js
 │   │   ├── constants.js
+│   │   ├── debouncedHooks.js
 │   │   ├── densityLayout.js
 │   │   ├── gridLayout.js
-│   │   ├── imageCache.js
+│   │   ├── imageBitmapCache.js
 │   │   ├── interactionMode.js
 │   │   ├── plotterData.js
+│   │   ├── quadtree.js
 │   │   └── syntheticDataGenerator.js
 │   └── main.jsx
 └── vite.config.js
@@ -926,12 +929,12 @@ imagdPlotting
 ---
 
 ## 📄 src\App.jsx
-**hash:** `5d54e8ff`
+**hash:** `1f35b659`
 
-### Chunk 1/2
+### Chunk 1/3
 
 ```jsx
-   1 | import { useState, useMemo } from "react";
+   1 | import { useState, useMemo, useEffect } from "react";
    2 | import { useWindowVirtualizer } from "@tanstack/react-virtual";
    3 | import Navbar from "./components/Navbar";
    4 | import ImageCountSelector from "./components/ImageCountSelector";
@@ -942,381 +945,423 @@ imagdPlotting
    9 | import PixiPlotter from "./components/PixiPlotter";
   10 | import KonvaPlotter from "./components/KonvaPlotter";
   11 | 
-  12 | import { generateSyntheticPoints } from "./lib/syntheticDataGenerator";
-  13 | 
-  14 | import {
-  15 |   DATA_POINT_LIMITS,
-  16 |   MAX_IMAGES_PER_POINT,
-  17 |   MIN_IMAGES_PER_POINT,
-  18 | } from "./lib/constants";
-  19 | 
-  20 | import "./App.css";
-  21 | 
-  22 | function App() {
-  23 |   const [activeTab, setActiveTab] = useState(null);
-  24 | 
-  25 |   const [imageCount, setImageCount] = useState(1);
-  26 | 
-  27 |   const [multiChartMode, setMultiChartMode] = useState(false);
-  28 | 
-  29 |   const [multiChartCount, setMultiChartCount] = useState(5);
-  30 | 
-  31 |   const [virtualiseCharts, setVirtualiseCharts] = useState(false);
-  32 | 
-  33 |   const [dataPointCount, setDataPointCount] = useState(
-  34 |     DATA_POINT_LIMITS.defaultCount,
-  35 |   );
-  36 | 
-  37 |   const [appliedXGap, setAppliedXGap] = useState(10);
-  38 | 
-  39 |   const [appliedYGap, setAppliedYGap] = useState(10);
-  40 | 
-  41 |   const [draftXGap, setDraftXGap] = useState(10);
-  42 | 
-  43 |   const [draftYGap, setDraftYGap] = useState(10);
-  44 | 
-  45 |   const hasChanges = draftXGap !== appliedXGap || draftYGap !== appliedYGap;
-  46 | 
-  47 |   // eslint-disable-next-line react-hooks/incompatible-library
-  48 |   const rowVirtualizer = useWindowVirtualizer({
-  49 |     count: multiChartCount,
-  50 |     estimateSize: () => 720,
-  51 |     overscan: 1,
-  52 |   });
-  53 | 
-  54 |   console.log(
-  55 |     "Visible charts:",
-  56 |     rowVirtualizer
-  57 |       .getVirtualItems()
-  58 |       .slice(0, 2)
-  59 |       .map((item) => item.index + 1),
-  60 |   );
-  61 | 
-  62 |   /**
-  63 |    * Stable deterministic synthetic data.
-  64 |    */
-  65 |   const syntheticPoints = useMemo(() => {
-  66 |     return generateSyntheticPoints(
-  67 |       Math.max(
-  68 |         DATA_POINT_LIMITS.min,
-  69 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
-  70 |       ),
-  71 |     );
-  72 |   }, [dataPointCount]);
-  73 | 
-  74 |   const handleGapUpdate = () => {
-  75 |     setAppliedXGap(draftXGap);
-  76 |     setAppliedYGap(draftYGap);
-  77 |   };
-  78 | 
-  79 |   const handleMultiChartCountChange = (value) => {
+  12 | import {
+  13 |   DATA_POINT_LIMITS,
+  14 |   MAX_IMAGES_PER_POINT,
+  15 |   MIN_IMAGES_PER_POINT,
+  16 | } from "./lib/constants";
+  17 | 
+  18 | import { retainOnlyChartViewports } from "./lib/chartViewportStore";
+  19 | import "./App.css";
+  20 | 
+  21 | function App() {
+  22 |   const [activeTab, setActiveTab] = useState(null);
+  23 | 
+  24 |   const [imageCount, setImageCount] = useState(1);
+  25 | 
+  26 |   const [multiChartMode, setMultiChartMode] = useState(false);
+  27 | 
+  28 |   const [multiChartCount, setMultiChartCount] = useState(5);
+  29 | 
+  30 |   const [virtualiseCharts, setVirtualiseCharts] = useState(false);
+  31 | 
+  32 |   const [enableQuadtree, setEnableQuadtree] = useState(false);
+  33 | 
+  34 |   const [enableLOD, setEnableLOD] = useState(false);
+  35 | 
+  36 |   const [enableCanvas, setEnableCanvas] = useState(false);
+  37 | 
+  38 |   const [dataPointCount, setDataPointCount] = useState(
+  39 |     DATA_POINT_LIMITS.defaultCount,
+  40 |   );
+  41 | 
+  42 |   const [appliedXGap, setAppliedXGap] = useState(10);
+  43 | 
+  44 |   const [appliedYGap, setAppliedYGap] = useState(10);
+  45 | 
+  46 |   const [draftXGap, setDraftXGap] = useState(10);
+  47 | 
+  48 |   const [draftYGap, setDraftYGap] = useState(10);
+  49 | 
+  50 |   const hasChanges = draftXGap !== appliedXGap || draftYGap !== appliedYGap;
+  51 | 
+  52 |   // eslint-disable-next-line react-hooks/incompatible-library
+  53 |   const rowVirtualizer = useWindowVirtualizer({
+  54 |     count: multiChartCount,
+  55 |     estimateSize: () => 720,
+  56 |     overscan: 1,
+  57 |   });
+  58 | 
+  59 |   const virtualItems = rowVirtualizer.getVirtualItems();
+  60 | 
+  61 |   const handleGapUpdate = () => {
+  62 |     setAppliedXGap(draftXGap);
+  63 |     setAppliedYGap(draftYGap);
+  64 |   };
+  65 | 
+  66 |   const handleMultiChartCountChange = (value) => {
+  67 |     const parsed = Number(value);
+  68 |     if (Number.isNaN(parsed)) {
+  69 |       setMultiChartCount(2);
+  70 |       return;
+  71 |     }
+  72 |     const clamped = Math.max(2, Math.min(10, Math.floor(parsed)));
+  73 |     setMultiChartCount(clamped);
+  74 |   };
+  75 | 
+  76 |   /**
+  77 |    * Critical normalization.
+  78 |    */
+  79 |   const handleImageCountChange = (value) => {
   80 |     const parsed = Number(value);
-  81 |     if (Number.isNaN(parsed)) {
-  82 |       setMultiChartCount(2);
-  83 |       return;
-  84 |     }
-  85 |     const clamped = Math.max(2, Math.min(10, Math.floor(parsed)));
-  86 |     setMultiChartCount(clamped);
-  87 |   };
-  88 | 
-  89 |   /**
-  90 |    * Critical normalization.
-  91 |    */
-  92 |   const handleImageCountChange = (value) => {
-  93 |     const parsed = Number(value);
+  81 | 
+  82 |     if (Number.isNaN(parsed)) {
+  83 |       setImageCount(1);
+  84 |       return;
+  85 |     }
+  86 | 
+  87 |     const clamped = Math.max(
+  88 |       MIN_IMAGES_PER_POINT,
+  89 |       Math.min(MAX_IMAGES_PER_POINT, Math.floor(parsed)),
+  90 |     );
+  91 | 
+  92 |     setImageCount(clamped);
+  93 |   };
   94 | 
-  95 |     if (Number.isNaN(parsed)) {
-  96 |       setImageCount(1);
-  97 |       return;
-  98 |     }
-  99 | 
- 100 |     const clamped = Math.max(
- 101 |       MIN_IMAGES_PER_POINT,
- 102 |       Math.min(MAX_IMAGES_PER_POINT, Math.floor(parsed)),
- 103 |     );
+  95 |   const plotterProps = {
+  96 |     imageCount,
+  97 |     xGap: appliedXGap,
+  98 |     yGap: appliedYGap,
+  99 |     dataPointCount,
+ 100 |     enableQuadtree,
+ 101 |     enableLOD,
+ 102 |     enableCanvas,
+ 103 |   };
  104 | 
- 105 |     setImageCount(clamped);
- 106 |   };
- 107 | 
- 108 |   const plotterProps = {
- 109 |     imageCount,
- 110 |     xGap: appliedXGap,
- 111 |     yGap: appliedYGap,
- 112 |     syntheticPoints,
- 113 |   };
- 114 | 
- 115 |   const renderSinglePlotter = ({ key, chartId }) => {
- 116 |     switch (activeTab) {
- 117 |       case "Recharts":
- 118 |         return (
- 119 |           <RechartsPlotter key={key} chartId={chartId} {...plotterProps} />
- 120 |         );
- 121 |       case "D3":
- 122 |         return <D3Plotter key={key} chartId={chartId} {...plotterProps} />;
- 123 |       case "PixiJS":
- 124 |         return <PixiPlotter key={key} chartId={chartId} {...plotterProps} />;
- 125 |       case "Konva":
- 126 |         return <KonvaPlotter key={key} chartId={chartId} {...plotterProps} />;
- 127 | 
- 128 |       default:
- 129 |         return (
- 130 |           <div
- 131 |             key={key}
- 132 |             style={{
- 133 |               height: "600px",
- 134 |               display: "flex",
- 135 |               alignItems: "center",
- 136 |               justifyContent: "center",
- 137 |               color: "#888",
- 138 |               fontSize: "20px",
- 139 |               fontWeight: "500",
- 140 |             }}
- 141 |           >
- 142 |             Click a tab to render the chart
- 143 |           </div>
- 144 |         );
- 145 |     }
- 146 |   };
- 147 | 
- 148 |   const renderCharts = () => {
- 149 |     if (!multiChartMode) {
- 150 |       return (
- 151 |         <div className="single-chart-wrapper">
- 152 |           {renderSinglePlotter("single-chart", "single-chart")}
- 153 |         </div>
- 154 |       );
- 155 |     }
- 156 | 
- 157 |     /**
- 158 |      * NON VIRTUALIZED
- 159 |      */
- 160 |     if (!virtualiseCharts) {
- 161 |       return (
- 162 |         <div className="multi-chart-wrapper">
- 163 |           {Array.from({
- 164 |             length: multiChartCount,
- 165 |           }).map((_, index) => (
- 166 |             <div key={`chart-wrapper-${index}`} className="multi-chart-item">
- 167 |               <div className="multi-chart-header">Chart {index + 1}</div>
- 168 |               {renderSinglePlotter({
- 169 |                 key: `chart-${index}`,
- 170 |                 chartId: `chart-${index}`,
- 171 |               })}
- 172 |             </div>
- 173 |           ))}
- 174 |         </div>
- 175 |       );
- 176 |     }
- 177 | 
- 178 |     /**
- 179 |      * VIRTUALIZED
- 180 |      */
- 181 |     return (
- 182 |       <div
- 183 |         style={{
- 184 |           width: "100%",
- 185 |           position: "relative",
- 186 |         }}
- 187 |       >
- 188 |         <div
- 189 |           style={{
- 190 |             height: `${rowVirtualizer.getTotalSize()}px`,
- 191 |             width: "100%",
- 192 |             position: "relative",
- 193 |           }}
- 194 |         >
- 195 |           {rowVirtualizer
- 196 |             .getVirtualItems()
- 197 |             .slice(0, 2)
- 198 |             .map((virtualRow) => (
- 199 |               <div
- 200 |                 key={virtualRow.key}
+ 105 |   const activeChartIds = useMemo(() => {
+ 106 |     if (!multiChartMode) {
+ 107 |       return ["single-chart"];
+ 108 |     }
+ 109 | 
+ 110 |     return Array.from(
+ 111 |       {
+ 112 |         length: multiChartCount,
+ 113 |       },
+ 114 |       (_, index) => `chart-${index}`,
+ 115 |     );
+ 116 |   }, [multiChartMode, multiChartCount]);
+ 117 | 
+ 118 |   useEffect(() => {
+ 119 |     retainOnlyChartViewports(activeChartIds);
+ 120 |   }, [activeChartIds]);
+ 121 | 
+ 122 |   const renderSinglePlotter = ({ key, chartId }) => {
+ 123 |     switch (activeTab) {
+ 124 |       case "Recharts":
+ 125 |         return (
+ 126 |           <RechartsPlotter key={key} chartId={chartId} {...plotterProps} />
+ 127 |         );
+ 128 |       case "D3":
+ 129 |         return <D3Plotter key={key} chartId={chartId} {...plotterProps} />;
+ 130 |       case "PixiJS":
+ 131 |         return <PixiPlotter key={key} chartId={chartId} {...plotterProps} />;
+ 132 |       case "Konva":
+ 133 |         return <KonvaPlotter key={key} chartId={chartId} {...plotterProps} />;
+ 134 | 
+ 135 |       default:
+ 136 |         return (
+ 137 |           <div
+ 138 |             key={key}
+ 139 |             style={{
+ 140 |               height: "600px",
+ 141 |               display: "flex",
+ 142 |               alignItems: "center",
+ 143 |               justifyContent: "center",
+ 144 |               color: "#888",
+ 145 |               fontSize: "20px",
+ 146 |               fontWeight: "500",
+ 147 |             }}
+ 148 |           >
+ 149 |             Click a tab to render the chart
+ 150 |           </div>
+ 151 |         );
+ 152 |     }
+ 153 |   };
+ 154 | 
+ 155 |   const renderCharts = () => {
+ 156 |     if (!multiChartMode) {
+ 157 |       return (
+ 158 |         <div className="single-chart-wrapper">
+ 159 |           {renderSinglePlotter({
+ 160 |             key: "single-chart",
+ 161 |             chartId: "single-chart",
+ 162 |           })}
+ 163 |         </div>
+ 164 |       );
+ 165 |     }
+ 166 | 
+ 167 |     /**
+ 168 |      * NON VIRTUALIZED
+ 169 |      */
+ 170 |     if (!virtualiseCharts) {
+ 171 |       return (
+ 172 |         <div className="multi-chart-wrapper">
+ 173 |           {Array.from({
+ 174 |             length: multiChartCount,
+ 175 |           }).map((_, index) => (
+ 176 |             <div key={`chart-wrapper-${index}`} className="multi-chart-item">
+ 177 |               <div className="multi-chart-header">Chart {index + 1}</div>
+ 178 |               {renderSinglePlotter({
+ 179 |                 key: `chart-${index}`,
+ 180 |                 chartId: `chart-${index}`,
+ 181 |               })}
+ 182 |             </div>
+ 183 |           ))}
+ 184 |         </div>
+ 185 |       );
+ 186 |     }
+ 187 | 
+ 188 |     /**
+ 189 |      * VIRTUALIZED
+ 190 |      */
+ 191 |     return (
+ 192 |       <div
+ 193 |         style={{
+ 194 |           width: "100%",
+ 195 |           position: "relative",
+ 196 |         }}
+ 197 |       >
+ 198 |         <div
+ 199 |           style={{
+ 200 |             height: `${rowVirtualizer.getTotalSize()}px`,
 ```
 
-### Chunk 2/2
+### Chunk 2/3
 
 ```jsx
- 201 |                 style={{
- 202 |                   position: "absolute",
- 203 |                   top: 0,
- 204 |                   left: 0,
- 205 |                   width: "100%",
- 206 |                   transform: `translateY(${virtualRow.start}px)`,
- 207 |                   paddingBottom: "20px",
- 208 |                 }}
- 209 |               >
- 210 |                 <div className="multi-chart-item">
- 211 |                   <div className="multi-chart-header">
- 212 |                     Chart {virtualRow.index + 1}
- 213 |                   </div>
- 214 | 
- 215 |                   {renderSinglePlotter({
- 216 |                     key: `chart-${virtualRow.index}`,
- 217 |                     chartId: `chart-${virtualRow.index}`,
- 218 |                   })}
- 219 |                 </div>
- 220 |               </div>
- 221 |             ))}
- 222 |         </div>
- 223 |       </div>
- 224 |     );
- 225 |   };
- 226 | 
- 227 |   return (
- 228 |     <div
- 229 |       className={`app-container ${multiChartMode ? "multi-mode-active" : ""}`}
- 230 |     >
- 231 |       <h1 className="app-title">Image Plotting System PoC</h1>
- 232 | 
- 233 |       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
- 234 | 
- 235 |       <DataPointCountControl
- 236 |         dataPointCount={dataPointCount}
- 237 |         onDataPointCountChange={setDataPointCount}
- 238 |       />
- 239 | 
- 240 |       <ImageCountSelector
- 241 |         imageCount={imageCount}
- 242 |         setImageCount={handleImageCountChange}
- 243 |       />
- 244 | 
- 245 |       <div className="multi-chart-controls">
- 246 |         {" "}
- 247 |         <div className="multi-chart-toggle-row">
- 248 |           <label className="multi-chart-label"> Multi Chart Mode </label>{" "}
- 249 |           <button
- 250 |             className={`multi-chart-toggle ${multiChartMode ? "active" : ""}`}
- 251 |             onClick={() => setMultiChartMode((prev) => !prev)}
- 252 |           >
- 253 |             {" "}
- 254 |             {multiChartMode ? "Enabled" : "Disabled"}{" "}
- 255 |           </button>{" "}
- 256 |           <label className="multi-chart-label">Virtualise Charts</label>
- 257 |           <button
- 258 |             className={`multi-chart-toggle ${virtualiseCharts ? "active" : ""}`}
- 259 |             onClick={() => setVirtualiseCharts((prev) => !prev)}
- 260 |           >
- 261 |             {virtualiseCharts ? "Enabled" : "Disabled"}
- 262 |           </button>{" "}
- 263 |         </div>{" "}
- 264 |         {multiChartMode && (
- 265 |           <div className="multi-chart-count-row">
- 266 |             {" "}
- 267 |             <label className="multi-chart-label"> Charts Count </label>{" "}
- 268 |             <input
- 269 |               type="number"
- 270 |               min="2"
- 271 |               max="10"
- 272 |               value={multiChartCount}
- 273 |               onChange={(e) => handleMultiChartCountChange(e.target.value)}
- 274 |               className="multi-chart-input"
- 275 |             />{" "}
- 276 |           </div>
- 277 |         )}{" "}
- 278 |       </div>
- 279 | 
- 280 |       <div
- 281 |         style={{
- 282 |           display: "flex",
- 283 |           gap: "20px",
- 284 |           justifyContent: "center",
- 285 |           marginBottom: "20px",
- 286 |         }}
- 287 |       >
- 288 |         <div
- 289 |           style={{
- 290 |             display: "flex",
- 291 |             alignItems: "center",
- 292 |             gap: "10px",
- 293 |           }}
- 294 |         >
- 295 |           <label style={{ color: "#fff" }}>X Gap:</label>
- 296 | 
- 297 |           <input
- 298 |             type="range"
- 299 |             min="1"
- 300 |             max="50"
- 301 |             value={draftXGap}
- 302 |             onChange={(e) => setDraftXGap(Number(e.target.value))}
- 303 |           />
- 304 | 
- 305 |           <span
- 306 |             style={{
- 307 |               color: "#888",
- 308 |               width: "20px",
- 309 |             }}
- 310 |           >
- 311 |             {draftXGap}
- 312 |           </span>
- 313 |         </div>
- 314 | 
- 315 |         <div
- 316 |           style={{
- 317 |             display: "flex",
- 318 |             alignItems: "center",
- 319 |             gap: "10px",
- 320 |           }}
- 321 |         >
- 322 |           <label style={{ color: "#fff" }}>Y Gap:</label>
- 323 | 
- 324 |           <input
- 325 |             type="range"
- 326 |             min="1"
- 327 |             max="50"
- 328 |             value={draftYGap}
- 329 |             onChange={(e) => setDraftYGap(Number(e.target.value))}
- 330 |           />
- 331 | 
- 332 |           <span
- 333 |             style={{
- 334 |               color: "#888",
- 335 |               width: "20px",
- 336 |             }}
- 337 |           >
- 338 |             {draftYGap}
- 339 |           </span>
- 340 |         </div>
+ 201 |             width: "100%",
+ 202 |             position: "relative",
+ 203 |           }}
+ 204 |         >
+ 205 |           {virtualItems.slice(0, 2).map((virtualRow) => {
+ 206 |             const chartId = `chart-${virtualRow.index}`;
+ 207 | 
+ 208 |             return (
+ 209 |               <div
+ 210 |                 key={chartId}
+ 211 |                 style={{
+ 212 |                   position: "absolute",
+ 213 |                   top: 0,
+ 214 |                   left: 0,
+ 215 |                   width: "100%",
+ 216 |                   transform: `translateY(${virtualRow.start}px)`,
+ 217 |                   paddingBottom: "20px",
+ 218 |                 }}
+ 219 |               >
+ 220 |                 <div className="multi-chart-item">
+ 221 |                   <div className="multi-chart-header">
+ 222 |                     Chart {virtualRow.index + 1}
+ 223 |                   </div>
+ 224 | 
+ 225 |                   {renderSinglePlotter({
+ 226 |                     key: chartId,
+ 227 |                     chartId,
+ 228 |                   })}
+ 229 |                 </div>
+ 230 |               </div>
+ 231 |             );
+ 232 |           })}
+ 233 |         </div>
+ 234 |       </div>
+ 235 |     );
+ 236 |   };
+ 237 | 
+ 238 |   return (
+ 239 |     <div
+ 240 |       className={`app-container ${multiChartMode ? "multi-mode-active" : ""}`}
+ 241 |     >
+ 242 |       <h1 className="app-title">Image Plotting System PoC</h1>
+ 243 | 
+ 244 |       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+ 245 | 
+ 246 |       <DataPointCountControl
+ 247 |         dataPointCount={dataPointCount}
+ 248 |         onDataPointCountChange={setDataPointCount}
+ 249 |       />
+ 250 | 
+ 251 |       <ImageCountSelector
+ 252 |         imageCount={imageCount}
+ 253 |         setImageCount={handleImageCountChange}
+ 254 |       />
+ 255 | 
+ 256 |       <div className="multi-chart-controls">
+ 257 |         {" "}
+ 258 |         <div className="multi-chart-toggle-row">
+ 259 |           <label className="multi-chart-label"> Multi Chart Mode </label>
+ 260 |           <button
+ 261 |             className={`multi-chart-toggle ${multiChartMode ? "active" : ""}`}
+ 262 |             onClick={() => setMultiChartMode((prev) => !prev)}
+ 263 |           >
+ 264 |             {multiChartMode ? "Enabled" : "Disabled"}
+ 265 |           </button>
+ 266 | 
+ 267 |           <label className="multi-chart-label">Virtualise Charts</label>
+ 268 |           <button
+ 269 |             className={`multi-chart-toggle ${virtualiseCharts ? "active" : ""}`}
+ 270 |             onClick={() => setVirtualiseCharts((prev) => !prev)}
+ 271 |           >
+ 272 |             {virtualiseCharts ? "Enabled" : "Disabled"}
+ 273 |           </button>
+ 274 | 
+ 275 |           {/* ✅ NEW BUTTONS */}
+ 276 | 
+ 277 |           <label className="multi-chart-label">Quadtree</label>
+ 278 |           <button
+ 279 |             className={`multi-chart-toggle ${enableQuadtree ? "active" : ""}`}
+ 280 |             onClick={() => setEnableQuadtree((prev) => !prev)}
+ 281 |           >
+ 282 |             {enableQuadtree ? "Enabled" : "Disabled"}
+ 283 |           </button>
+ 284 | 
+ 285 |           <label className="multi-chart-label">LOD Images</label>
+ 286 |           <button
+ 287 |             className={`multi-chart-toggle ${enableLOD ? "active" : ""}`}
+ 288 |             onClick={() => setEnableLOD((prev) => !prev)}
+ 289 |           >
+ 290 |             {enableLOD ? "Enabled" : "Disabled"}
+ 291 |           </button>
+ 292 | 
+ 293 |           <label className="multi-chart-label">Canvas Rendering</label>
+ 294 |           <button
+ 295 |             className={`multi-chart-toggle ${enableCanvas ? "active" : ""}`}
+ 296 |             onClick={() => setEnableCanvas((prev) => !prev)}
+ 297 |           >
+ 298 |             {enableCanvas ? "Enabled" : "Disabled"}
+ 299 |           </button>
+ 300 |         </div>{" "}
+ 301 |         {multiChartMode && (
+ 302 |           <div className="multi-chart-count-row">
+ 303 |             {" "}
+ 304 |             <label className="multi-chart-label"> Charts Count </label>{" "}
+ 305 |             <input
+ 306 |               type="number"
+ 307 |               min="2"
+ 308 |               max="10"
+ 309 |               value={multiChartCount}
+ 310 |               onChange={(e) => handleMultiChartCountChange(e.target.value)}
+ 311 |               className="multi-chart-input"
+ 312 |             />{" "}
+ 313 |           </div>
+ 314 |         )}{" "}
+ 315 |       </div>
+ 316 | 
+ 317 |       <div
+ 318 |         style={{
+ 319 |           display: "flex",
+ 320 |           gap: "20px",
+ 321 |           justifyContent: "center",
+ 322 |           marginBottom: "20px",
+ 323 |         }}
+ 324 |       >
+ 325 |         <div
+ 326 |           style={{
+ 327 |             display: "flex",
+ 328 |             alignItems: "center",
+ 329 |             gap: "10px",
+ 330 |           }}
+ 331 |         >
+ 332 |           <label style={{ color: "#fff" }}>X Gap:</label>
+ 333 | 
+ 334 |           <input
+ 335 |             type="range"
+ 336 |             min="1"
+ 337 |             max="50"
+ 338 |             value={draftXGap}
+ 339 |             onChange={(e) => setDraftXGap(Number(e.target.value))}
+ 340 |           />
  341 | 
- 342 |         <button
- 343 |           onClick={handleGapUpdate}
- 344 |           disabled={!hasChanges}
- 345 |           style={{
- 346 |             padding: "5px 15px",
- 347 |             backgroundColor: hasChanges ? "#2e8b57" : "#444",
- 348 | 
- 349 |             color: hasChanges ? "#fff" : "#888",
- 350 | 
- 351 |             border: "none",
- 352 |             borderRadius: "4px",
- 353 | 
- 354 |             cursor: hasChanges ? "pointer" : "not-allowed",
- 355 | 
- 356 |             fontWeight: "bold",
+ 342 |           <span
+ 343 |             style={{
+ 344 |               color: "#888",
+ 345 |               width: "20px",
+ 346 |             }}
+ 347 |           >
+ 348 |             {draftXGap}
+ 349 |           </span>
+ 350 |         </div>
+ 351 | 
+ 352 |         <div
+ 353 |           style={{
+ 354 |             display: "flex",
+ 355 |             alignItems: "center",
+ 356 |             gap: "10px",
  357 |           }}
  358 |         >
- 359 |           Update
- 360 |         </button>
- 361 |       </div>
- 362 | 
- 363 |       <div className="viewer-container">{renderCharts()}</div>
- 364 |     </div>
- 365 |   );
- 366 | }
- 367 | 
- 368 | export default App;
- 369 | 
+ 359 |           <label style={{ color: "#fff" }}>Y Gap:</label>
+ 360 | 
+ 361 |           <input
+ 362 |             type="range"
+ 363 |             min="1"
+ 364 |             max="50"
+ 365 |             value={draftYGap}
+ 366 |             onChange={(e) => setDraftYGap(Number(e.target.value))}
+ 367 |           />
+ 368 | 
+ 369 |           <span
+ 370 |             style={{
+ 371 |               color: "#888",
+ 372 |               width: "20px",
+ 373 |             }}
+ 374 |           >
+ 375 |             {draftYGap}
+ 376 |           </span>
+ 377 |         </div>
+ 378 | 
+ 379 |         <button
+ 380 |           onClick={handleGapUpdate}
+ 381 |           disabled={!hasChanges}
+ 382 |           style={{
+ 383 |             padding: "5px 15px",
+ 384 |             backgroundColor: hasChanges ? "#2e8b57" : "#444",
+ 385 | 
+ 386 |             color: hasChanges ? "#fff" : "#888",
+ 387 | 
+ 388 |             border: "none",
+ 389 |             borderRadius: "4px",
+ 390 | 
+ 391 |             cursor: hasChanges ? "pointer" : "not-allowed",
+ 392 | 
+ 393 |             fontWeight: "bold",
+ 394 |           }}
+ 395 |         >
+ 396 |           Update
+ 397 |         </button>
+ 398 |       </div>
+ 399 | 
+ 400 |       <div className="viewer-container">{renderCharts()}</div>
+```
+
+### Chunk 3/3
+
+```jsx
+ 401 |     </div>
+ 402 |   );
+ 403 | }
+ 404 | 
+ 405 | export default App;
+ 406 | 
 ```
 
 
 ---
 
 ## 📄 src\components\D3Plotter.jsx
-**hash:** `3f3371b0`
+**hash:** `71c04db7`
 
-### Chunk 1/5
+### Chunk 1/6
 
 ```jsx
-   1 | import { useRef, useEffect, useState } from "react";
+   1 | import { useRef, useEffect, useState, useMemo } from "react";
    2 | import * as d3 from "d3";
    3 | import { usePlotterData } from "../lib/plotterData";
    4 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
@@ -1333,910 +1378,1106 @@ imagdPlotting
   15 |   BRUSH_ZOOM,
   16 |   ZOOM_SCALE_FACTOR,
   17 |   WHEEL_ZOOM_SENSITIVITY,
-  18 | } from "../lib/constants";
-  19 | import {
-  20 |   computeAdaptiveCellSize,
-  21 |   filterVisiblePoints,
-  22 |   computeEffectiveImageCount,
-  23 | } from "../lib/densityLayout";
-  24 | import PlotterControls from "./PlotterControls";
-  25 | 
-  26 | /* ─── Entry Component ───────────────────────────────────────────── */
+  18 |   DATA_POINT_LIMITS,
+  19 | } from "../lib/constants";
+  20 | import {
+  21 |   computeAdaptiveCellSize,
+  22 |   filterVisiblePoints,
+  23 |   computeEffectiveImageCount,
+  24 | } from "../lib/densityLayout";
+  25 | import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
+  26 | import PlotterControls from "./PlotterControls";
   27 | 
-  28 | function D3Plotter({ chartId, imageCount, xGap, yGap, syntheticPoints }) {
-  29 |   const {
-  30 |     plotterPoints: fetchedPoints,
-  31 |     isLoading,
-  32 |     loadError,
-  33 |   } = usePlotterData();
-  34 | 
-  35 |   const plotterPoints = syntheticPoints || fetchedPoints;
-  36 | 
-  37 |   if (!syntheticPoints && isLoading)
-  38 |     return <div className="plotter-loading">Loading data…</div>;
-  39 |   if (!syntheticPoints && loadError)
-  40 |     return <div className="plotter-error">Error: {loadError}</div>;
-  41 | 
-  42 |   return (
-  43 |     <D3PlotCanvas
-  44 |       plotterPoints={plotterPoints}
-  45 |       imageCount={imageCount}
-  46 |       xGap={xGap}
-  47 |       yGap={yGap}
-  48 |       chartId={chartId}
-  49 |     />
-  50 |   );
-  51 | }
-  52 | 
-  53 | /* ─── Canvas Wrapper ────────────────────────────────────────────── */
+  28 | const MIN_ZOOM_SCALE = 1.001;
+  29 | 
+  30 | /* ─── Entry Component ───────────────────────────────────────────── */
+  31 | 
+  32 | function D3Plotter({ chartId, imageCount, xGap, yGap, dataPointCount }) {
+  33 |   const {
+  34 |     plotterPoints: fetchedPoints,
+  35 |     isLoading,
+  36 |     loadError,
+  37 |   } = usePlotterData();
+  38 | 
+  39 |   const syntheticPoints = useMemo(() => {
+  40 |     return generateSyntheticPoints(
+  41 |       Math.max(
+  42 |         DATA_POINT_LIMITS.min,
+  43 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
+  44 |       ),
+  45 |     );
+  46 |   }, [dataPointCount]);
+  47 | 
+  48 |   const plotterPoints = syntheticPoints || fetchedPoints;
+  49 | 
+  50 |   if (!syntheticPoints && isLoading)
+  51 |     return <div className="plotter-loading">Loading data…</div>;
+  52 |   if (!syntheticPoints && loadError)
+  53 |     return <div className="plotter-error">Error: {loadError}</div>;
   54 | 
-  55 | function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
-  56 |   const svgRef = useRef(null);
-  57 |   const tooltipRef = useRef(null);
-  58 |   const containerRef = useRef(null);
-  59 |   const plotControlsRef = useRef(null);
-  60 |   const interactionCleanupRef = useRef(null);
-  61 | 
-  62 |   const originalXDomainRef = useRef(null);
-  63 |   const originalYDomainRef = useRef(null);
-  64 | 
-  65 |   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
-  66 |   const { interactionMode, setInteractionMode, isZoomMode } =
-  67 |     useInteractionMode();
-  68 | 
-  69 |   useEffect(() => {
-  70 |     if (!containerRef.current) return;
-  71 | 
-  72 |     const resizeObserver = new ResizeObserver((entries) => {
-  73 |       const entry = entries[0];
-  74 |       if (entry) setContainerWidth(entry.contentRect.width);
-  75 |     });
-  76 | 
-  77 |     resizeObserver.observe(containerRef.current);
-  78 |     return () => resizeObserver.disconnect();
-  79 |   }, []);
-  80 | 
-  81 |   useEffect(() => {
-  82 |     if (!svgRef.current || plotterPoints.length === 0) return;
-  83 | 
-  84 |     const initResult = initializePlot(
-  85 |       svgRef.current,
-  86 |       tooltipRef.current,
-  87 |       plotterPoints,
-  88 |       imageCount,
-  89 |       containerWidth,
-  90 |       xGap,
-  91 |       yGap,
-  92 |       originalXDomainRef,
-  93 |       originalYDomainRef,
-  94 |       chartId,
-  95 |     );
+  55 |   return (
+  56 |     <D3PlotCanvas
+  57 |       plotterPoints={plotterPoints}
+  58 |       imageCount={imageCount}
+  59 |       xGap={xGap}
+  60 |       yGap={yGap}
+  61 |       chartId={chartId}
+  62 |     />
+  63 |   );
+  64 | }
+  65 | 
+  66 | /* ─── Canvas Wrapper ────────────────────────────────────────────── */
+  67 | 
+  68 | function D3PlotCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
+  69 |   const svgRef = useRef(null);
+  70 |   const tooltipRef = useRef(null);
+  71 |   const containerRef = useRef(null);
+  72 |   const plotControlsRef = useRef(null);
+  73 |   const interactionCleanupRef = useRef(null);
+  74 | 
+  75 |   const originalXDomainRef = useRef(null);
+  76 |   const originalYDomainRef = useRef(null);
+  77 | 
+  78 |   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
+  79 |   const { interactionMode, setInteractionMode, isZoomMode } =
+  80 |     useInteractionMode();
+  81 | 
+  82 |   useEffect(() => {
+  83 |     if (!containerRef.current) return;
+  84 | 
+  85 |     const resizeObserver = new ResizeObserver((entries) => {
+  86 |       const entry = entries[0];
+  87 |       if (entry) setContainerWidth(entry.contentRect.width);
+  88 |     });
+  89 | 
+  90 |     resizeObserver.observe(containerRef.current);
+  91 |     return () => resizeObserver.disconnect();
+  92 |   }, []);
+  93 | 
+  94 |   useEffect(() => {
+  95 |     if (!svgRef.current || plotterPoints.length === 0) return;
   96 | 
-  97 |     plotControlsRef.current = initResult.controls;
-  98 |     interactionCleanupRef.current = initResult.setActiveInteractionMode;
-  99 | 
- 100 |     // Apply initial mode once after chart creation
- 101 |     initResult.setActiveInteractionMode(interactionMode);
- 102 |   }, [plotterPoints, imageCount, containerWidth, xGap, yGap]); // interactionMode removed
- 103 | 
- 104 |   useEffect(() => {
- 105 |     if (interactionCleanupRef.current) {
- 106 |       interactionCleanupRef.current(interactionMode);
- 107 |     }
- 108 |   }, [interactionMode]);
+  97 |     const initResult = initializePlot(
+  98 |       svgRef.current,
+  99 |       tooltipRef.current,
+ 100 |       plotterPoints,
+ 101 |       imageCount,
+ 102 |       containerWidth,
+ 103 |       xGap,
+ 104 |       yGap,
+ 105 |       originalXDomainRef,
+ 106 |       originalYDomainRef,
+ 107 |       chartId,
+ 108 |     );
  109 | 
- 110 |   const handleZoomIn = () => plotControlsRef.current?.zoomIn();
- 111 |   const handleZoomOut = () => plotControlsRef.current?.zoomOut();
- 112 |   const handleReset = () => plotControlsRef.current?.resetZoom();
- 113 |   const cursorStyle = isZoomMode ? "crosshair" : "grab";
- 114 | 
- 115 |   return (
- 116 |     <div ref={containerRef} style={{ position: "relative" }}>
- 117 |       <PlotterControls
- 118 |         onZoomIn={handleZoomIn}
- 119 |         onZoomOut={handleZoomOut}
- 120 |         onReset={handleReset}
- 121 |         interactionMode={interactionMode}
- 122 |         onModeChange={setInteractionMode}
- 123 |       />
- 124 |       <svg ref={svgRef} style={{ cursor: cursorStyle }} />
- 125 |       <div
- 126 |         ref={tooltipRef}
- 127 |         className="plotter-tooltip"
- 128 |         style={{ display: "none" }}
- 129 |       />
- 130 |     </div>
- 131 |   );
- 132 | }
- 133 | 
- 134 | /* ─── Plot Initialization ───────────────────────────────────────── */
- 135 | 
- 136 | function initializePlot(
- 137 |   svgElement,
- 138 |   tooltipElement,
- 139 |   plotterPoints,
- 140 |   imageCount,
- 141 |   containerWidth,
- 142 |   xGap,
- 143 |   yGap,
- 144 |   originalXDomainRef,
- 145 |   originalYDomainRef,
- 146 |   chartId,
- 147 | ) {
- 148 |   const width = containerWidth;
- 149 |   const height = PLOT_DIMENSIONS.height;
- 150 |   const margin = PLOT_MARGIN;
- 151 |   const innerWidth = width - margin.left - margin.right;
- 152 |   const innerHeight = height - margin.top - margin.bottom;
- 153 | 
- 154 |   const svg = d3.select(svgElement);
- 155 |   svg.selectAll("*").remove();
- 156 |   svg
- 157 |     .attr("width", width)
- 158 |     .attr("height", height)
- 159 |     .style("background", "transparent");
- 160 | 
- 161 |   const xScale = buildXScale(plotterPoints, innerWidth, xGap);
- 162 |   const yScale = buildYScale(plotterPoints, innerHeight, yGap);
- 163 | 
- 164 |   originalXDomainRef.current = xScale.domain().slice();
- 165 |   originalYDomainRef.current = yScale.domain().slice();
- 166 | 
- 167 |   const originalDomainSpanX =
- 168 |     originalXDomainRef.current[1] - originalXDomainRef.current[0];
- 169 | 
- 170 |   const originalDomainSpanY =
- 171 |     originalYDomainRef.current[1] - originalYDomainRef.current[0];
- 172 | 
- 173 |   const savedViewport = getChartViewport(chartId);
- 174 | 
- 175 |   if (savedViewport.xDomain) {
- 176 |     xScale.domain(savedViewport.xDomain);
- 177 |   }
- 178 | 
- 179 |   if (savedViewport.yDomain) {
- 180 |     yScale.domain(savedViewport.yDomain);
- 181 |   }
+ 110 |     plotControlsRef.current = initResult.controls;
+ 111 |     interactionCleanupRef.current = initResult.setActiveInteractionMode;
+ 112 | 
+ 113 |     // Apply initial mode once after chart creation
+ 114 |     initResult.setActiveInteractionMode(interactionMode);
+ 115 | 
+ 116 |     return () => {
+ 117 |       initResult.destroy?.();
+ 118 | 
+ 119 |       plotControlsRef.current = null;
+ 120 |       interactionCleanupRef.current = null;
+ 121 |       originalXDomainRef.current = null;
+ 122 |       originalYDomainRef.current = null;
+ 123 |     };
+ 124 |   }, [plotterPoints, imageCount, containerWidth, xGap, yGap, chartId]); // interactionMode removed
+ 125 | 
+ 126 |   useEffect(() => {
+ 127 |     if (interactionCleanupRef.current) {
+ 128 |       interactionCleanupRef.current(interactionMode);
+ 129 |     }
+ 130 |   }, [interactionMode]);
+ 131 | 
+ 132 |   const handleZoomIn = () => plotControlsRef.current?.zoomIn();
+ 133 |   const handleZoomOut = () => plotControlsRef.current?.zoomOut();
+ 134 |   const handleReset = () => plotControlsRef.current?.resetZoom();
+ 135 |   const cursorStyle = isZoomMode ? "crosshair" : "grab";
+ 136 | 
+ 137 |   return (
+ 138 |     <div ref={containerRef} style={{ position: "relative" }}>
+ 139 |       <PlotterControls
+ 140 |         onZoomIn={handleZoomIn}
+ 141 |         onZoomOut={handleZoomOut}
+ 142 |         onReset={handleReset}
+ 143 |         interactionMode={interactionMode}
+ 144 |         onModeChange={setInteractionMode}
+ 145 |       />
+ 146 |       <svg ref={svgRef} style={{ cursor: cursorStyle }} />
+ 147 |       <div
+ 148 |         ref={tooltipRef}
+ 149 |         className="plotter-tooltip"
+ 150 |         style={{ display: "none" }}
+ 151 |       />
+ 152 |     </div>
+ 153 |   );
+ 154 | }
+ 155 | 
+ 156 | /* ─── Plot Initialization ───────────────────────────────────────── */
+ 157 | 
+ 158 | function initializePlot(
+ 159 |   svgElement,
+ 160 |   tooltipElement,
+ 161 |   plotterPoints,
+ 162 |   imageCount,
+ 163 |   containerWidth,
+ 164 |   xGap,
+ 165 |   yGap,
+ 166 |   originalXDomainRef,
+ 167 |   originalYDomainRef,
+ 168 |   chartId,
+ 169 | ) {
+ 170 |   const width = containerWidth;
+ 171 |   const height = PLOT_DIMENSIONS.height;
+ 172 |   const margin = PLOT_MARGIN;
+ 173 |   const innerWidth = width - margin.left - margin.right;
+ 174 |   const innerHeight = height - margin.top - margin.bottom;
+ 175 | 
+ 176 |   const svg = d3.select(svgElement);
+ 177 |   svg.selectAll("*").remove();
+ 178 |   svg
+ 179 |     .attr("width", width)
+ 180 |     .attr("height", height)
+ 181 |     .style("background", "transparent");
  182 | 
- 183 |   const clipId = "plot-clip-" + Math.random().toString(36).slice(2);
- 184 |   svg
- 185 |     .append("defs")
- 186 |     .append("clipPath")
- 187 |     .attr("id", clipId)
- 188 |     .append("rect")
- 189 |     .attr("width", innerWidth)
- 190 |     .attr("height", innerHeight);
+ 183 |   const xScale = buildXScale(plotterPoints, innerWidth, xGap);
+ 184 |   const yScale = buildYScale(plotterPoints, innerHeight, yGap);
+ 185 | 
+ 186 |   originalXDomainRef.current = xScale.domain().slice();
+ 187 |   originalYDomainRef.current = yScale.domain().slice();
+ 188 | 
+ 189 |   const originalDomainSpanX =
+ 190 |     originalXDomainRef.current[1] - originalXDomainRef.current[0];
  191 | 
- 192 |   const rootGroup = svg
- 193 |     .append("g")
- 194 |     .attr("transform", `translate(${margin.left},${margin.top})`);
- 195 | 
- 196 |   const plotGroup = rootGroup.append("g").attr("clip-path", `url(#${clipId})`);
- 197 |   const contentGroup = plotGroup.append("g");
- 198 | 
- 199 |   renderAxes(rootGroup, xScale, yScale, innerWidth, innerHeight);
- 200 |   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
+ 192 |   const originalDomainSpanY =
+ 193 |     originalYDomainRef.current[1] - originalYDomainRef.current[0];
+ 194 | 
+ 195 |   const savedViewport = getChartViewport(chartId);
+ 196 | 
+ 197 |   if (savedViewport.xDomain && savedViewport.yDomain) {
+ 198 |     const savedXSpan = savedViewport.xDomain[1] - savedViewport.xDomain[0];
+ 199 |     const savedYSpan = savedViewport.yDomain[1] - savedViewport.yDomain[0];
+ 200 | 
 ```
 
-### Chunk 2/5
+### Chunk 2/6
 
 ```jsx
- 201 | 
- 202 |   const initialVisiblePoints = filterVisiblePoints(
- 203 |     plotterPoints,
- 204 |     (val) => xScale(val),
- 205 |     (val) => yScale(val),
- 206 |     innerWidth,
- 207 |     innerHeight,
- 208 |     CELL_SIZE,
- 209 |   );
- 210 | 
- 211 |   const baseCellSize =
- 212 |     savedViewport.baseCellSize ??
- 213 |     computeAdaptiveCellSize(
- 214 |       initialVisiblePoints,
- 215 |       (val) => xScale(val),
- 216 |       (val) => yScale(val),
- 217 |     );
- 218 | 
- 219 |   updateChartViewport(chartId, {
- 220 |     baseCellSize,
- 221 |   });
- 222 | 
- 223 |   const currentSpanX = xScale.domain()[1] - xScale.domain()[0];
- 224 | 
- 225 |   const currentSpanY = yScale.domain()[1] - yScale.domain()[0];
- 226 | 
- 227 |   const zoomFactorX = originalDomainSpanX / currentSpanX;
+ 201 |     const originalXSpan =
+ 202 |       originalXDomainRef.current[1] - originalXDomainRef.current[0];
+ 203 |     const originalYSpan =
+ 204 |       originalYDomainRef.current[1] - originalYDomainRef.current[0];
+ 205 | 
+ 206 |     const isSavedZoomedOut =
+ 207 |       savedXSpan > originalXSpan || savedYSpan > originalYSpan;
+ 208 | 
+ 209 |     if (!isSavedZoomedOut) {
+ 210 |       xScale.domain(savedViewport.xDomain);
+ 211 |       yScale.domain(savedViewport.yDomain);
+ 212 |     } else {
+ 213 |       updateChartViewport(chartId, {
+ 214 |         xDomain: originalXDomainRef.current.slice(),
+ 215 |         yDomain: originalYDomainRef.current.slice(),
+ 216 |       });
+ 217 |     }
+ 218 |   }
+ 219 | 
+ 220 |   const clipId = "plot-clip-" + Math.random().toString(36).slice(2);
+ 221 |   svg
+ 222 |     .append("defs")
+ 223 |     .append("clipPath")
+ 224 |     .attr("id", clipId)
+ 225 |     .append("rect")
+ 226 |     .attr("width", innerWidth)
+ 227 |     .attr("height", innerHeight);
  228 | 
- 229 |   const zoomFactorY = originalDomainSpanY / currentSpanY;
- 230 | 
- 231 |   const zoomFactor = Math.min(zoomFactorX, zoomFactorY);
+ 229 |   const rootGroup = svg
+ 230 |     .append("g")
+ 231 |     .attr("transform", `translate(${margin.left},${margin.top})`);
  232 | 
- 233 |   const zoomedCellSize = baseCellSize * zoomFactor;
- 234 | 
- 235 |   const initialEffectiveImageCount = computeEffectiveImageCount(
- 236 |     zoomedCellSize,
- 237 |     imageCount,
- 238 |   );
- 239 | 
- 240 |   renderImagePoints(
- 241 |     contentGroup,
- 242 |     initialVisiblePoints,
- 243 |     xScale,
- 244 |     yScale,
- 245 |     initialEffectiveImageCount,
- 246 |     tooltipElement,
- 247 |     zoomedCellSize,
- 248 |   );
- 249 | 
- 250 |   const redrawContext = {
- 251 |     contentGroup,
- 252 |     rootGroup,
- 253 |     xScale,
- 254 |     yScale,
- 255 |     innerWidth,
- 256 |     innerHeight,
- 257 |     plotterPoints,
- 258 |     imageCount,
- 259 |     tooltipElement,
- 260 |     baseCellSize,
- 261 |     originalDomainSpanX,
- 262 |     originalDomainSpanY,
- 263 |   };
- 264 | 
- 265 |   const triggerRedraw = () => redrawPlotContent(redrawContext);
- 266 | 
- 267 |   const brushGroup = plotGroup.append("g").attr("class", "d3-brush");
- 268 | 
- 269 |   const brush = buildBrush(
- 270 |     xScale,
- 271 |     yScale,
- 272 |     innerWidth,
- 273 |     innerHeight,
- 274 |     brushGroup,
- 275 |     triggerRedraw,
- 276 |     chartId,
- 277 |   );
- 278 |   brushGroup.call(brush);
- 279 | 
- 280 |   brushGroup.lower();
- 281 |   const panOverlay = plotGroup
- 282 |     .append("rect")
- 283 |     .attr("class", "d3-pan-overlay")
- 284 |     .attr("width", innerWidth)
- 285 |     .attr("height", innerHeight)
- 286 |     .attr("fill", "transparent")
- 287 |     .style("display", "none");
- 288 | 
- 289 |   const panDrag = buildPanDrag(
+ 233 |   const plotGroup = rootGroup.append("g").attr("clip-path", `url(#${clipId})`);
+ 234 |   const contentGroup = plotGroup.append("g");
+ 235 | 
+ 236 |   renderAxes(rootGroup, xScale, yScale, innerWidth, innerHeight);
+ 237 |   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
+ 238 | 
+ 239 |   const initialVisiblePoints = filterVisiblePoints(
+ 240 |     plotterPoints,
+ 241 |     (val) => xScale(val),
+ 242 |     (val) => yScale(val),
+ 243 |     innerWidth,
+ 244 |     innerHeight,
+ 245 |     CELL_SIZE,
+ 246 |   );
+ 247 | 
+ 248 |   const baseCellSize =
+ 249 |     savedViewport.baseCellSize ??
+ 250 |     computeAdaptiveCellSize(
+ 251 |       initialVisiblePoints,
+ 252 |       (val) => xScale(val),
+ 253 |       (val) => yScale(val),
+ 254 |     );
+ 255 | 
+ 256 |   updateChartViewport(chartId, {
+ 257 |     baseCellSize,
+ 258 |   });
+ 259 | 
+ 260 |   const currentSpanX = xScale.domain()[1] - xScale.domain()[0];
+ 261 | 
+ 262 |   const currentSpanY = yScale.domain()[1] - yScale.domain()[0];
+ 263 | 
+ 264 |   const zoomFactorX = originalDomainSpanX / currentSpanX;
+ 265 | 
+ 266 |   const zoomFactorY = originalDomainSpanY / currentSpanY;
+ 267 | 
+ 268 |   const zoomFactor = Math.min(zoomFactorX, zoomFactorY);
+ 269 | 
+ 270 |   const zoomedCellSize = baseCellSize * zoomFactor;
+ 271 | 
+ 272 |   const initialEffectiveImageCount = computeEffectiveImageCount(
+ 273 |     zoomedCellSize,
+ 274 |     imageCount,
+ 275 |   );
+ 276 | 
+ 277 |   renderImagePoints(
+ 278 |     contentGroup,
+ 279 |     initialVisiblePoints,
+ 280 |     xScale,
+ 281 |     yScale,
+ 282 |     initialEffectiveImageCount,
+ 283 |     tooltipElement,
+ 284 |     zoomedCellSize,
+ 285 |   );
+ 286 | 
+ 287 |   const redrawContext = {
+ 288 |     contentGroup,
+ 289 |     rootGroup,
  290 |     xScale,
  291 |     yScale,
  292 |     innerWidth,
  293 |     innerHeight,
- 294 |     triggerRedraw,
- 295 |     chartId,
- 296 |   );
- 297 | 
- 298 |   attachWheelZoom(
- 299 |     svg,
- 300 |     margin,
- 301 |     xScale,
- 302 |     yScale,
- 303 |     innerWidth,
- 304 |     innerHeight,
- 305 |     triggerRedraw,
- 306 |     chartId,
- 307 |   );
- 308 |   attachDoubleClickReset(
- 309 |     svg,
- 310 |     xScale,
- 311 |     yScale,
- 312 |     originalXDomainRef,
- 313 |     originalYDomainRef,
- 314 |     triggerRedraw,
- 315 |     chartId,
- 316 |   );
- 317 | 
- 318 |   const setActiveInteractionMode = (mode) => {
- 319 |     // Clear previous interactions
- 320 |     brushGroup.on(".brush", null);
- 321 |     panOverlay.on(".drag", null);
- 322 | 
- 323 |     if (mode === INTERACTION_MODES.ZOOM) {
- 324 |       panOverlay.style("display", "none");
+ 294 |     plotterPoints,
+ 295 |     imageCount,
+ 296 |     tooltipElement,
+ 297 |     baseCellSize,
+ 298 |     originalDomainSpanX,
+ 299 |     originalDomainSpanY,
+ 300 |   };
+ 301 | 
+ 302 |   const triggerRedraw = () => redrawPlotContent(redrawContext);
+ 303 | 
+ 304 |   const brushGroup = plotGroup.append("g").attr("class", "d3-brush");
+ 305 | 
+ 306 |   const brush = buildBrush(
+ 307 |     xScale,
+ 308 |     yScale,
+ 309 |     innerWidth,
+ 310 |     innerHeight,
+ 311 |     brushGroup,
+ 312 |     triggerRedraw,
+ 313 |     chartId,
+ 314 |   );
+ 315 |   brushGroup.call(brush);
+ 316 | 
+ 317 |   brushGroup.lower();
+ 318 |   const panOverlay = plotGroup
+ 319 |     .append("rect")
+ 320 |     .attr("class", "d3-pan-overlay")
+ 321 |     .attr("width", innerWidth)
+ 322 |     .attr("height", innerHeight)
+ 323 |     .attr("fill", "transparent")
+ 324 |     .style("display", "none");
  325 | 
- 326 |       brushGroup.style("display", null);
- 327 |       brushGroup.call(brush);
- 328 | 
- 329 |       brushGroup.select(".overlay").style("cursor", "crosshair");
- 330 |     } else {
- 331 |       brushGroup.style("display", "none");
- 332 | 
- 333 |       panOverlay.style("display", null);
- 334 |       panOverlay.call(panDrag);
- 335 |     }
- 336 |   };
- 337 | 
- 338 |   const controls = buildPlotControls(
- 339 |     xScale,
- 340 |     yScale,
- 341 |     originalXDomainRef,
- 342 |     originalYDomainRef,
- 343 |     triggerRedraw,
- 344 |     chartId,
- 345 |   );
- 346 | 
- 347 |   return { controls, setActiveInteractionMode };
- 348 | }
- 349 | 
- 350 | /* ─── Scale Builders ────────────────────────────────────────────── */
- 351 | 
- 352 | function buildXScale(plotterPoints, innerWidth, xGap) {
- 353 |   const xExtent = d3.extent(plotterPoints, (point) => point.x);
- 354 |   const padding = (xExtent[1] - xExtent[0]) * 0.15 || 5;
- 355 |   const xSpacingScale = xGap / 10;
- 356 | 
- 357 |   return d3
- 358 |     .scaleLinear()
- 359 |     .domain([xExtent[0] - padding, xExtent[1] + padding])
- 360 |     .range([0, innerWidth * xSpacingScale]);
- 361 | }
- 362 | 
- 363 | function buildYScale(plotterPoints, innerHeight, yGap) {
- 364 |   const yExtent = d3.extent(plotterPoints, (point) => point.y);
- 365 |   const padding = (yExtent[1] - yExtent[0]) * 0.15 || 5;
- 366 |   const ySpacingScale = yGap / 10;
- 367 | 
- 368 |   return d3
- 369 |     .scaleLinear()
- 370 |     .domain([yExtent[0] - padding, yExtent[1] + padding])
- 371 |     .range([innerHeight * ySpacingScale, 0]);
- 372 | }
+ 326 |   const panDrag = buildPanDrag(
+ 327 |     xScale,
+ 328 |     yScale,
+ 329 |     innerWidth,
+ 330 |     innerHeight,
+ 331 |     triggerRedraw,
+ 332 |     chartId,
+ 333 |     originalXDomainRef,
+ 334 |     originalYDomainRef,
+ 335 |   );
+ 336 | 
+ 337 |   attachWheelZoom(
+ 338 |     svg,
+ 339 |     margin,
+ 340 |     xScale,
+ 341 |     yScale,
+ 342 |     innerWidth,
+ 343 |     innerHeight,
+ 344 |     triggerRedraw,
+ 345 |     chartId,
+ 346 |     originalXDomainRef,
+ 347 |     originalYDomainRef,
+ 348 |   );
+ 349 |   attachDoubleClickReset(
+ 350 |     svg,
+ 351 |     xScale,
+ 352 |     yScale,
+ 353 |     originalXDomainRef,
+ 354 |     originalYDomainRef,
+ 355 |     triggerRedraw,
+ 356 |     chartId,
+ 357 |   );
+ 358 | 
+ 359 |   const setActiveInteractionMode = (mode) => {
+ 360 |     // Clear previous interactions
+ 361 |     brushGroup.on(".brush", null);
+ 362 |     panOverlay.on(".drag", null);
+ 363 | 
+ 364 |     if (mode === INTERACTION_MODES.ZOOM) {
+ 365 |       panOverlay.style("display", "none");
+ 366 | 
+ 367 |       brushGroup.style("display", null);
+ 368 |       brushGroup.call(brush);
+ 369 | 
+ 370 |       brushGroup.select(".overlay").style("cursor", "crosshair");
+ 371 |     } else {
+ 372 |       brushGroup.style("display", "none");
  373 | 
- 374 | /* ─── Brush Zoom ────────────────────────────────────────────────── */
- 375 | 
- 376 | function buildBrush(
- 377 |   xScale,
- 378 |   yScale,
- 379 |   innerWidth,
- 380 |   innerHeight,
- 381 |   brushGroup,
- 382 |   redrawCallback,
- 383 |   chartId,
- 384 | ) {
- 385 |   const brush = d3
- 386 |     .brush()
- 387 |     .extent([
- 388 |       [0, 0],
- 389 |       [innerWidth, innerHeight],
- 390 |     ])
- 391 |     .on("end", (event) => {
- 392 |       handleBrushEnd(
- 393 |         event,
- 394 |         brush,
- 395 |         brushGroup,
- 396 |         xScale,
- 397 |         yScale,
- 398 |         redrawCallback,
- 399 |         chartId,
- 400 |       );
+ 374 |       panOverlay.style("display", null);
+ 375 |       panOverlay.call(panDrag);
+ 376 |     }
+ 377 |   };
+ 378 | 
+ 379 |   const controls = buildPlotControls(
+ 380 |     xScale,
+ 381 |     yScale,
+ 382 |     originalXDomainRef,
+ 383 |     originalYDomainRef,
+ 384 |     triggerRedraw,
+ 385 |     chartId,
+ 386 |   );
+ 387 |   const destroy = () => {
+ 388 |     brushGroup.on(".brush", null);
+ 389 |     panOverlay.on(".drag", null);
+ 390 | 
+ 391 |     svg.on("wheel.zoom", null);
+ 392 |     svg.on("dblclick.zoom", null);
+ 393 |     svg.on(".zoom", null);
+ 394 |     svg.on(".brush", null);
+ 395 |     svg.on(".drag", null);
+ 396 | 
+ 397 |     contentGroup.selectAll("*").on(".", null).remove();
+ 398 |     rootGroup.selectAll("*").on(".", null).remove();
+ 399 |     svg.selectAll("*").on(".", null).remove();
+ 400 | 
 ```
 
-### Chunk 3/5
+### Chunk 3/6
 
 ```jsx
- 401 |     });
- 402 | 
- 403 |   return brush;
- 404 | }
- 405 | 
- 406 | function handleBrushEnd(
- 407 |   event,
- 408 |   brush,
- 409 |   brushGroup,
- 410 |   xScale,
- 411 |   yScale,
- 412 |   redrawCallback,
- 413 |   chartId,
- 414 | ) {
- 415 |   const selection = event.selection;
- 416 |   if (!selection) return;
- 417 | 
- 418 |   const [[pixelX0, pixelY0], [pixelX1, pixelY1]] = selection;
- 419 |   const selectionWidth = pixelX1 - pixelX0;
- 420 |   const selectionHeight = pixelY1 - pixelY0;
+ 401 |     if (tooltipElement) {
+ 402 |       d3.select(tooltipElement).style("display", "none").html("");
+ 403 |     }
+ 404 | 
+ 405 |     redrawContext.contentGroup = null;
+ 406 |     redrawContext.rootGroup = null;
+ 407 |     redrawContext.xScale = null;
+ 408 |     redrawContext.yScale = null;
+ 409 |     redrawContext.plotterPoints = null;
+ 410 |     redrawContext.imageCount = null;
+ 411 |     redrawContext.tooltipElement = null;
+ 412 |     redrawContext.baseCellSize = null;
+ 413 |     redrawContext.originalDomainSpanX = null;
+ 414 |     redrawContext.originalDomainSpanY = null;
+ 415 |   };
+ 416 | 
+ 417 |   return { controls, setActiveInteractionMode, destroy };
+ 418 | }
+ 419 | 
+ 420 | /* ─── Scale Builders ────────────────────────────────────────────── */
  421 | 
- 422 |   if (
- 423 |     selectionWidth < BRUSH_ZOOM.minimumSelectionPixels ||
- 424 |     selectionHeight < BRUSH_ZOOM.minimumSelectionPixels
- 425 |   ) {
- 426 |     brushGroup.call(brush.move, null);
- 427 |     return;
- 428 |   }
- 429 | 
- 430 |   logChartInteractionEvent({
- 431 |     interactionType: "ZOOM_IN",
- 432 |     visualizationLibrary: "D3",
- 433 |     interactionSource: "brush",
- 434 |   });
- 435 | 
- 436 |   const newXDomain = [xScale.invert(pixelX0), xScale.invert(pixelX1)];
- 437 |   const newYDomain = [yScale.invert(pixelY1), yScale.invert(pixelY0)];
- 438 | 
- 439 |   xScale.domain(newXDomain);
- 440 |   yScale.domain(newYDomain);
- 441 | 
- 442 |   updateChartViewport(chartId, {
- 443 |     xDomain: newXDomain,
- 444 |     yDomain: newYDomain,
- 445 |   });
- 446 | 
- 447 |   brushGroup.call(brush.move, null);
- 448 |   redrawCallback();
- 449 | }
- 450 | 
- 451 | /* ─── Pan Drag ──────────────────────────────────────────────────── */
- 452 | 
- 453 | function buildPanDrag(
- 454 |   xScale,
- 455 |   yScale,
- 456 |   innerWidth,
- 457 |   innerHeight,
- 458 |   redrawCallback,
- 459 |   chartId,
- 460 | ) {
- 461 |   let startXDomain = null;
- 462 |   let startYDomain = null;
- 463 | 
- 464 |   return d3
- 465 |     .drag()
- 466 |     .on("start", () => {
- 467 |       logChartInteractionEvent({
- 468 |         interactionType: "PAN",
- 469 |         visualizationLibrary: "D3",
- 470 |         interactionSource: "drag",
- 471 |       });
- 472 |       startXDomain = xScale.domain().slice();
- 473 |       startYDomain = yScale.domain().slice();
- 474 |     })
- 475 |     .on("drag", (event) => {
- 476 |       if (!startXDomain || !startYDomain) return;
- 477 | 
- 478 |       const xSpanPerPixel = (startXDomain[1] - startXDomain[0]) / innerWidth;
- 479 |       const ySpanPerPixel = (startYDomain[1] - startYDomain[0]) / innerHeight;
- 480 | 
- 481 |       const domainDeltaX = -event.dx * xSpanPerPixel;
- 482 |       const domainDeltaY = event.dy * ySpanPerPixel;
- 483 | 
- 484 |       const currentXDomain = xScale.domain();
- 485 |       const currentYDomain = yScale.domain();
- 486 | 
- 487 |       xScale.domain([
- 488 |         currentXDomain[0] + domainDeltaX,
- 489 |         currentXDomain[1] + domainDeltaX,
- 490 |       ]);
- 491 |       yScale.domain([
- 492 |         currentYDomain[0] + domainDeltaY,
- 493 |         currentYDomain[1] + domainDeltaY,
- 494 |       ]);
- 495 | 
- 496 |       updateChartViewport(chartId, {
- 497 |         xDomain: xScale.domain().slice(),
- 498 |         yDomain: yScale.domain().slice(),
- 499 |       });
- 500 | 
- 501 |       redrawCallback();
- 502 |     })
- 503 |     .on("end", () => {
- 504 |       startXDomain = null;
- 505 |       startYDomain = null;
- 506 |     });
- 507 | }
+ 422 | function buildXScale(plotterPoints, innerWidth, xGap) {
+ 423 |   const xExtent = d3.extent(plotterPoints, (point) => point.x);
+ 424 |   const padding = (xExtent[1] - xExtent[0]) * 0.15 || 5;
+ 425 |   const xSpacingScale = xGap / 10;
+ 426 | 
+ 427 |   return d3
+ 428 |     .scaleLinear()
+ 429 |     .domain([xExtent[0] - padding, xExtent[1] + padding])
+ 430 |     .range([0, innerWidth * xSpacingScale]);
+ 431 | }
+ 432 | 
+ 433 | function buildYScale(plotterPoints, innerHeight, yGap) {
+ 434 |   const yExtent = d3.extent(plotterPoints, (point) => point.y);
+ 435 |   const padding = (yExtent[1] - yExtent[0]) * 0.15 || 5;
+ 436 |   const ySpacingScale = yGap / 10;
+ 437 | 
+ 438 |   return d3
+ 439 |     .scaleLinear()
+ 440 |     .domain([yExtent[0] - padding, yExtent[1] + padding])
+ 441 |     .range([innerHeight * ySpacingScale, 0]);
+ 442 | }
+ 443 | 
+ 444 | /* ─── Brush Zoom ────────────────────────────────────────────────── */
+ 445 | 
+ 446 | function buildBrush(
+ 447 |   xScale,
+ 448 |   yScale,
+ 449 |   innerWidth,
+ 450 |   innerHeight,
+ 451 |   brushGroup,
+ 452 |   redrawCallback,
+ 453 |   chartId,
+ 454 | ) {
+ 455 |   const brush = d3
+ 456 |     .brush()
+ 457 |     .extent([
+ 458 |       [0, 0],
+ 459 |       [innerWidth, innerHeight],
+ 460 |     ])
+ 461 |     .on("end", (event) => {
+ 462 |       handleBrushEnd(
+ 463 |         event,
+ 464 |         brush,
+ 465 |         brushGroup,
+ 466 |         xScale,
+ 467 |         yScale,
+ 468 |         redrawCallback,
+ 469 |         chartId,
+ 470 |       );
+ 471 |     });
+ 472 | 
+ 473 |   return brush;
+ 474 | }
+ 475 | 
+ 476 | function handleBrushEnd(
+ 477 |   event,
+ 478 |   brush,
+ 479 |   brushGroup,
+ 480 |   xScale,
+ 481 |   yScale,
+ 482 |   redrawCallback,
+ 483 |   chartId,
+ 484 | ) {
+ 485 |   const selection = event.selection;
+ 486 |   if (!selection) return;
+ 487 | 
+ 488 |   const [[pixelX0, pixelY0], [pixelX1, pixelY1]] = selection;
+ 489 |   const selectionWidth = pixelX1 - pixelX0;
+ 490 |   const selectionHeight = pixelY1 - pixelY0;
+ 491 | 
+ 492 |   if (
+ 493 |     selectionWidth < BRUSH_ZOOM.minimumSelectionPixels ||
+ 494 |     selectionHeight < BRUSH_ZOOM.minimumSelectionPixels
+ 495 |   ) {
+ 496 |     brushGroup.call(brush.move, null);
+ 497 |     return;
+ 498 |   }
+ 499 | 
+ 500 |   logChartInteractionEvent({
+ 501 |     interactionType: "ZOOM_IN",
+ 502 |     visualizationLibrary: "D3",
+ 503 |     interactionSource: "brush",
+ 504 |   });
+ 505 | 
+ 506 |   const newXDomain = [xScale.invert(pixelX0), xScale.invert(pixelX1)];
+ 507 |   const newYDomain = [yScale.invert(pixelY1), yScale.invert(pixelY0)];
  508 | 
- 509 | /* ─── Wheel Zoom ────────────────────────────────────────────────── */
- 510 | 
- 511 | function attachWheelZoom(
- 512 |   svg,
- 513 |   margin,
- 514 |   xScale,
- 515 |   yScale,
- 516 |   innerWidth,
- 517 |   innerHeight,
- 518 |   redrawCallback,
- 519 |   chartId,
- 520 | ) {
- 521 |   svg.on(
- 522 |     "wheel.zoom",
- 523 |     (event) => {
- 524 |       event.preventDefault();
- 525 |       handleWheelZoom(
- 526 |         event,
- 527 |         margin,
- 528 |         xScale,
- 529 |         yScale,
- 530 |         innerWidth,
- 531 |         innerHeight,
- 532 |         redrawCallback,
- 533 |         chartId,
- 534 |       );
- 535 |     },
- 536 |     { passive: false },
- 537 |   );
- 538 | }
- 539 | 
- 540 | function handleWheelZoom(
- 541 |   event,
- 542 |   margin,
- 543 |   xScale,
- 544 |   yScale,
- 545 |   innerWidth,
- 546 |   innerHeight,
- 547 |   redrawCallback,
- 548 |   chartId,
- 549 | ) {
- 550 |   const zoomFactor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
+ 509 |   xScale.domain(newXDomain);
+ 510 |   yScale.domain(newYDomain);
+ 511 | 
+ 512 |   updateChartViewport(chartId, {
+ 513 |     xDomain: newXDomain,
+ 514 |     yDomain: newYDomain,
+ 515 |   });
+ 516 | 
+ 517 |   brushGroup.call(brush.move, null);
+ 518 |   redrawCallback();
+ 519 | }
+ 520 | 
+ 521 | /* ─── Pan Drag ──────────────────────────────────────────────────── */
+ 522 | 
+ 523 | function buildPanDrag(
+ 524 |   xScale,
+ 525 |   yScale,
+ 526 |   innerWidth,
+ 527 |   innerHeight,
+ 528 |   redrawCallback,
+ 529 |   chartId,
+ 530 |   originalXDomainRef,
+ 531 |   originalYDomainRef,
+ 532 | ) {
+ 533 |   let startXDomain = null;
+ 534 |   let startYDomain = null;
+ 535 | 
+ 536 |   return d3
+ 537 |     .drag()
+ 538 |     .on("start", () => {
+ 539 |       if (
+ 540 |         isD3AtBaseZoomOrBelow(
+ 541 |           xScale,
+ 542 |           yScale,
+ 543 |           originalXDomainRef,
+ 544 |           originalYDomainRef,
+ 545 |         )
+ 546 |       ) {
+ 547 |         startXDomain = null;
+ 548 |         startYDomain = null;
+ 549 |         return;
+ 550 |       }
  551 | 
- 552 |   const svgRect = event.currentTarget.getBoundingClientRect();
- 553 |   const cursorX = event.clientX - svgRect.left - margin.left;
- 554 |   const cursorY = event.clientY - svgRect.top - margin.top;
- 555 | 
- 556 |   const isCursorInsidePlot =
- 557 |     cursorX >= 0 &&
- 558 |     cursorX <= innerWidth &&
- 559 |     cursorY >= 0 &&
- 560 |     cursorY <= innerHeight;
- 561 | 
- 562 |   if (!isCursorInsidePlot) return;
+ 552 |       logChartInteractionEvent({
+ 553 |         interactionType: "PAN",
+ 554 |         visualizationLibrary: "D3",
+ 555 |         interactionSource: "drag",
+ 556 |       });
+ 557 | 
+ 558 |       startXDomain = xScale.domain().slice();
+ 559 |       startYDomain = yScale.domain().slice();
+ 560 |     })
+ 561 |     .on("drag", (event) => {
+ 562 |       if (!startXDomain || !startYDomain) return;
  563 | 
- 564 |   const isZoomIn = event.deltaY < 0;
- 565 |   logChartInteractionEvent({
- 566 |     interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
- 567 |     visualizationLibrary: "D3",
- 568 |     interactionSource: "wheel",
- 569 |   });
- 570 | 
- 571 |   const anchorDataX = xScale.invert(cursorX);
- 572 |   const anchorDataY = yScale.invert(cursorY);
- 573 | 
- 574 |   zoomDomainAroundAnchor(xScale, anchorDataX, zoomFactor);
- 575 |   zoomDomainAroundAnchor(yScale, anchorDataY, zoomFactor);
+ 564 |       if (
+ 565 |         isD3AtBaseZoomOrBelow(
+ 566 |           xScale,
+ 567 |           yScale,
+ 568 |           originalXDomainRef,
+ 569 |           originalYDomainRef,
+ 570 |         )
+ 571 |       ) {
+ 572 |         startXDomain = null;
+ 573 |         startYDomain = null;
+ 574 |         return;
+ 575 |       }
  576 | 
- 577 |   updateChartViewport(chartId, {
- 578 |     xDomain: xScale.domain().slice(),
- 579 |     yDomain: yScale.domain().slice(),
- 580 |   });
- 581 | 
- 582 |   redrawCallback();
- 583 | }
- 584 | 
- 585 | /* ─── Double-Click Reset ───────────────────────────────────────── */
- 586 | 
- 587 | function attachDoubleClickReset(
- 588 |   svg,
- 589 |   xScale,
- 590 |   yScale,
- 591 |   originalXDomainRef,
- 592 |   originalYDomainRef,
- 593 |   redrawCallback,
- 594 |   chartId,
- 595 | ) {
- 596 |   svg.on("dblclick.zoom", () => {
- 597 |     logChartInteractionEvent({
- 598 |       interactionType: "RESET",
- 599 |       visualizationLibrary: "D3",
- 600 |       interactionSource: "double_click",
+ 577 |       const xSpanPerPixel = (startXDomain[1] - startXDomain[0]) / innerWidth;
+ 578 |       const ySpanPerPixel = (startYDomain[1] - startYDomain[0]) / innerHeight;
+ 579 | 
+ 580 |       const domainDeltaX = -event.dx * xSpanPerPixel;
+ 581 |       const domainDeltaY = event.dy * ySpanPerPixel;
+ 582 | 
+ 583 |       const currentXDomain = xScale.domain();
+ 584 |       const currentYDomain = yScale.domain();
+ 585 | 
+ 586 |       xScale.domain([
+ 587 |         currentXDomain[0] + domainDeltaX,
+ 588 |         currentXDomain[1] + domainDeltaX,
+ 589 |       ]);
+ 590 |       yScale.domain([
+ 591 |         currentYDomain[0] + domainDeltaY,
+ 592 |         currentYDomain[1] + domainDeltaY,
+ 593 |       ]);
+ 594 | 
+ 595 |       updateChartViewport(chartId, {
+ 596 |         xDomain: xScale.domain().slice(),
+ 597 |         yDomain: yScale.domain().slice(),
+ 598 |       });
+ 599 | 
+ 600 |       redrawCallback();
 ```
 
-### Chunk 4/5
+### Chunk 4/6
 
 ```jsx
- 601 |     });
- 602 |     resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
- 603 |     updateChartViewport(chartId, {
- 604 |       xDomain: originalXDomainRef.current.slice(),
- 605 |       yDomain: originalYDomainRef.current.slice(),
- 606 |     });
- 607 |     redrawCallback();
- 608 |   });
- 609 | }
- 610 | 
- 611 | /* ─── Domain Manipulation Helpers ───────────────────────────────── */
- 612 | 
- 613 | function zoomDomainAroundAnchor(scale, anchorValue, zoomFactor) {
- 614 |   const [domainMin, domainMax] = scale.domain();
- 615 |   const newMin = anchorValue - (anchorValue - domainMin) / zoomFactor;
- 616 |   const newMax = anchorValue + (domainMax - anchorValue) / zoomFactor;
- 617 |   scale.domain([newMin, newMax]);
- 618 | }
- 619 | 
- 620 | function zoomDomainAroundCenter(scale, zoomFactor) {
- 621 |   const [domainMin, domainMax] = scale.domain();
- 622 |   const center = (domainMin + domainMax) / 2;
- 623 |   zoomDomainAroundAnchor(scale, center, zoomFactor);
- 624 | }
- 625 | 
- 626 | function resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef) {
- 627 |   xScale.domain(originalXDomainRef.current.slice());
- 628 |   yScale.domain(originalYDomainRef.current.slice());
- 629 | }
- 630 | 
- 631 | /* ─── Plot Controls (Button Handlers) ──────────────────────────── */
- 632 | 
- 633 | function buildPlotControls(
- 634 |   xScale,
- 635 |   yScale,
- 636 |   originalXDomainRef,
- 637 |   originalYDomainRef,
- 638 |   redrawCallback,
- 639 |   chartId,
- 640 | ) {
- 641 |   return {
- 642 |     zoomIn: () => {
- 643 |       logChartInteractionEvent({
- 644 |         interactionType: "ZOOM_IN",
- 645 |         visualizationLibrary: "D3",
- 646 |         interactionSource: "button",
- 647 |       });
- 648 |       zoomDomainAroundCenter(xScale, ZOOM_SCALE_FACTOR);
- 649 |       zoomDomainAroundCenter(yScale, ZOOM_SCALE_FACTOR);
- 650 |       updateChartViewport(chartId, {
- 651 |         xDomain: xScale.domain().slice(),
- 652 |         yDomain: yScale.domain().slice(),
- 653 |       });
- 654 |       redrawCallback();
- 655 |     },
- 656 |     zoomOut: () => {
- 657 |       logChartInteractionEvent({
- 658 |         interactionType: "ZOOM_OUT",
- 659 |         visualizationLibrary: "D3",
- 660 |         interactionSource: "button",
- 661 |       });
- 662 |       zoomDomainAroundCenter(xScale, 1 / ZOOM_SCALE_FACTOR);
- 663 |       zoomDomainAroundCenter(yScale, 1 / ZOOM_SCALE_FACTOR);
- 664 |       updateChartViewport(chartId, {
- 665 |         xDomain: xScale.domain().slice(),
- 666 |         yDomain: yScale.domain().slice(),
- 667 |       });
- 668 |       redrawCallback();
- 669 |     },
- 670 |     resetZoom: () => {
- 671 |       logChartInteractionEvent({
- 672 |         interactionType: "RESET",
- 673 |         visualizationLibrary: "D3",
- 674 |         interactionSource: "button",
- 675 |       });
- 676 |       resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
- 677 |       updateChartViewport(chartId, {
- 678 |         xDomain: originalXDomainRef.current.slice(),
- 679 |         yDomain: originalYDomainRef.current.slice(),
- 680 |       });
- 681 |       redrawCallback();
- 682 |     },
- 683 |   };
- 684 | }
- 685 | 
- 686 | /* ─── Content Redraw Pipeline ───────────────────────────────────── */
- 687 | 
- 688 | function redrawPlotContent(context) {
- 689 |   const {
- 690 |     contentGroup,
- 691 |     rootGroup,
- 692 |     xScale,
- 693 |     yScale,
- 694 |     innerWidth,
- 695 |     innerHeight,
- 696 |     plotterPoints,
- 697 |     imageCount,
- 698 |     tooltipElement,
- 699 |     baseCellSize,
- 700 |     originalDomainSpanX,
- 701 |     originalDomainSpanY,
- 702 |   } = context;
- 703 | 
- 704 |   /* Compute zoom factor from domain ratio so images grow when zoomed in,
- 705 |      matching the transform-based magnification of Recharts/Konva/PixiJS. */
- 706 |   const currentSpanX = xScale.domain()[1] - xScale.domain()[0];
- 707 |   const currentSpanY = yScale.domain()[1] - yScale.domain()[0];
- 708 |   const zoomFactorX = originalDomainSpanX / currentSpanX;
- 709 |   const zoomFactorY = originalDomainSpanY / currentSpanY;
- 710 |   const zoomFactor = Math.min(zoomFactorX, zoomFactorY);
- 711 | 
- 712 |   const zoomedCellSize = baseCellSize * zoomFactor;
- 713 | 
- 714 |   const visiblePoints = filterVisiblePoints(
- 715 |     plotterPoints,
- 716 |     (val) => xScale(val),
- 717 |     (val) => yScale(val),
- 718 |     innerWidth,
- 719 |     innerHeight,
- 720 |     zoomedCellSize,
- 721 |   );
- 722 | 
- 723 |   const effectiveImageCount = computeEffectiveImageCount(
- 724 |     zoomedCellSize,
- 725 |     imageCount,
- 726 |   );
- 727 | 
- 728 |   contentGroup.selectAll(".grid-lines, .image-point").remove();
- 729 | 
- 730 |   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
- 731 |   renderImagePoints(
- 732 |     contentGroup,
- 733 |     visiblePoints,
- 734 |     xScale,
- 735 |     yScale,
- 736 |     effectiveImageCount,
- 737 |     tooltipElement,
- 738 |     zoomedCellSize,
- 739 |   );
- 740 | 
- 741 |   updateAxes(rootGroup, xScale, yScale);
- 742 | }
+ 601 |     })
+ 602 |     .on("end", () => {
+ 603 |       startXDomain = null;
+ 604 |       startYDomain = null;
+ 605 |     });
+ 606 | }
+ 607 | 
+ 608 | /* ─── Wheel Zoom ────────────────────────────────────────────────── */
+ 609 | 
+ 610 | function attachWheelZoom(
+ 611 |   svg,
+ 612 |   margin,
+ 613 |   xScale,
+ 614 |   yScale,
+ 615 |   innerWidth,
+ 616 |   innerHeight,
+ 617 |   redrawCallback,
+ 618 |   chartId,
+ 619 |   originalXDomainRef,
+ 620 |   originalYDomainRef,
+ 621 | ) {
+ 622 |   svg.on(
+ 623 |     "wheel.zoom",
+ 624 |     (event) => {
+ 625 |       event.preventDefault();
+ 626 |       handleWheelZoom(
+ 627 |         event,
+ 628 |         margin,
+ 629 |         xScale,
+ 630 |         yScale,
+ 631 |         innerWidth,
+ 632 |         innerHeight,
+ 633 |         redrawCallback,
+ 634 |         chartId,
+ 635 |         originalXDomainRef,
+ 636 |         originalYDomainRef,
+ 637 |       );
+ 638 |     },
+ 639 |     { passive: false },
+ 640 |   );
+ 641 | }
+ 642 | 
+ 643 | function handleWheelZoom(
+ 644 |   event,
+ 645 |   margin,
+ 646 |   xScale,
+ 647 |   yScale,
+ 648 |   innerWidth,
+ 649 |   innerHeight,
+ 650 |   redrawCallback,
+ 651 |   chartId,
+ 652 |   originalXDomainRef,
+ 653 |   originalYDomainRef,
+ 654 | ) {
+ 655 |   const zoomFactor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
+ 656 | 
+ 657 |   const svgRect = event.currentTarget.getBoundingClientRect();
+ 658 |   const cursorX = event.clientX - svgRect.left - margin.left;
+ 659 |   const cursorY = event.clientY - svgRect.top - margin.top;
+ 660 | 
+ 661 |   const isCursorInsidePlot =
+ 662 |     cursorX >= 0 &&
+ 663 |     cursorX <= innerWidth &&
+ 664 |     cursorY >= 0 &&
+ 665 |     cursorY <= innerHeight;
+ 666 | 
+ 667 |   if (!isCursorInsidePlot) return;
+ 668 | 
+ 669 |   const isZoomIn = event.deltaY < 0;
+ 670 | 
+ 671 |   if (
+ 672 |     !isZoomIn &&
+ 673 |     isD3AtBaseZoomOrBelow(
+ 674 |       xScale,
+ 675 |       yScale,
+ 676 |       originalXDomainRef,
+ 677 |       originalYDomainRef,
+ 678 |     )
+ 679 |   ) {
+ 680 |     return;
+ 681 |   }
+ 682 | 
+ 683 |   logChartInteractionEvent({
+ 684 |     interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
+ 685 |     visualizationLibrary: "D3",
+ 686 |     interactionSource: "wheel",
+ 687 |   });
+ 688 | 
+ 689 |   const anchorDataX = xScale.invert(cursorX);
+ 690 |   const anchorDataY = yScale.invert(cursorY);
+ 691 | 
+ 692 |   zoomDomainAroundAnchor(xScale, anchorDataX, zoomFactor);
+ 693 |   zoomDomainAroundAnchor(yScale, anchorDataY, zoomFactor);
+ 694 | 
+ 695 |   if (
+ 696 |     !isZoomIn &&
+ 697 |     isD3AtBaseZoomOrBelow(
+ 698 |       xScale,
+ 699 |       yScale,
+ 700 |       originalXDomainRef,
+ 701 |       originalYDomainRef,
+ 702 |     )
+ 703 |   ) {
+ 704 |     xScale.domain(originalXDomainRef.current.slice());
+ 705 |     yScale.domain(originalYDomainRef.current.slice());
+ 706 |   }
+ 707 | 
+ 708 |   updateChartViewport(chartId, {
+ 709 |     xDomain: xScale.domain().slice(),
+ 710 |     yDomain: yScale.domain().slice(),
+ 711 |   });
+ 712 | 
+ 713 |   redrawCallback();
+ 714 | }
+ 715 | 
+ 716 | /* ─── Double-Click Reset ───────────────────────────────────────── */
+ 717 | 
+ 718 | function attachDoubleClickReset(
+ 719 |   svg,
+ 720 |   xScale,
+ 721 |   yScale,
+ 722 |   originalXDomainRef,
+ 723 |   originalYDomainRef,
+ 724 |   redrawCallback,
+ 725 |   chartId,
+ 726 | ) {
+ 727 |   svg.on("dblclick.zoom", () => {
+ 728 |     logChartInteractionEvent({
+ 729 |       interactionType: "RESET",
+ 730 |       visualizationLibrary: "D3",
+ 731 |       interactionSource: "double_click",
+ 732 |     });
+ 733 |     resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
+ 734 |     updateChartViewport(chartId, {
+ 735 |       xDomain: originalXDomainRef.current.slice(),
+ 736 |       yDomain: originalYDomainRef.current.slice(),
+ 737 |     });
+ 738 |     redrawCallback();
+ 739 |   });
+ 740 | }
+ 741 | 
+ 742 | /* ─── Domain Manipulation Helpers ───────────────────────────────── */
  743 | 
- 744 | /* ─── Axes ──────────────────────────────────────────────────────── */
- 745 | 
- 746 | function renderAxes(container, xScale, yScale, innerWidth, innerHeight) {
- 747 |   container
- 748 |     .append("g")
- 749 |     .attr("class", "x-axis")
- 750 |     .attr("transform", `translate(0,${innerHeight})`)
- 751 |     .call(d3.axisBottom(xScale).ticks(8))
- 752 |     .selectAll("text")
- 753 |     .attr("fill", "#888");
- 754 | 
- 755 |   container
- 756 |     .append("g")
- 757 |     .attr("class", "y-axis")
- 758 |     .call(d3.axisLeft(yScale).ticks(6))
- 759 |     .selectAll("text")
- 760 |     .attr("fill", "#888");
+ 744 | function getD3ZoomLevel(
+ 745 |   xScale,
+ 746 |   yScale,
+ 747 |   originalXDomainRef,
+ 748 |   originalYDomainRef,
+ 749 | ) {
+ 750 |   if (!originalXDomainRef.current || !originalYDomainRef.current) {
+ 751 |     return 1;
+ 752 |   }
+ 753 | 
+ 754 |   const currentXSpan = xScale.domain()[1] - xScale.domain()[0];
+ 755 |   const currentYSpan = yScale.domain()[1] - yScale.domain()[0];
+ 756 | 
+ 757 |   const originalXSpan =
+ 758 |     originalXDomainRef.current[1] - originalXDomainRef.current[0];
+ 759 |   const originalYSpan =
+ 760 |     originalYDomainRef.current[1] - originalYDomainRef.current[0];
  761 | 
- 762 |   styleAxisElements(container);
- 763 | }
+ 762 |   const zoomX = originalXSpan / currentXSpan;
+ 763 |   const zoomY = originalYSpan / currentYSpan;
  764 | 
- 765 | function updateAxes(container, xScale, yScale) {
- 766 |   container.select(".x-axis").call(d3.axisBottom(xScale).ticks(8));
- 767 |   container.select(".y-axis").call(d3.axisLeft(yScale).ticks(6));
- 768 | 
- 769 |   container.selectAll(".x-axis text, .y-axis text").attr("fill", "#888");
- 770 |   styleAxisElements(container);
- 771 | }
- 772 | 
- 773 | function styleAxisElements(container) {
- 774 |   container.selectAll(".x-axis line, .y-axis line").attr("stroke", "#555");
- 775 |   container.selectAll(".x-axis path, .y-axis path").attr("stroke", "#555");
- 776 | }
- 777 | 
- 778 | /* ─── Grid ──────────────────────────────────────────────────────── */
+ 765 |   return Math.min(zoomX, zoomY);
+ 766 | }
+ 767 | 
+ 768 | function isD3AtBaseZoomOrBelow(
+ 769 |   xScale,
+ 770 |   yScale,
+ 771 |   originalXDomainRef,
+ 772 |   originalYDomainRef,
+ 773 | ) {
+ 774 |   return (
+ 775 |     getD3ZoomLevel(xScale, yScale, originalXDomainRef, originalYDomainRef) <=
+ 776 |     MIN_ZOOM_SCALE
+ 777 |   );
+ 778 | }
  779 | 
- 780 | function renderGrid(container, xScale, yScale, innerWidth, innerHeight) {
- 781 |   const gridGroup = container.append("g").attr("class", "grid-lines");
- 782 | 
- 783 |   gridGroup
- 784 |     .selectAll("line.horizontal")
- 785 |     .data(yScale.ticks(6))
- 786 |     .enter()
- 787 |     .append("line")
- 788 |     .attr("class", "horizontal")
- 789 |     .attr("x1", 0)
- 790 |     .attr("x2", innerWidth)
- 791 |     .attr("y1", (tick) => yScale(tick))
- 792 |     .attr("y2", (tick) => yScale(tick))
- 793 |     .attr("stroke", "#2a2a3e")
- 794 |     .attr("stroke-dasharray", "3 3");
- 795 | 
- 796 |   gridGroup
- 797 |     .selectAll("line.vertical")
- 798 |     .data(xScale.ticks(8))
- 799 |     .enter()
- 800 |     .append("line")
+ 780 | function zoomDomainAroundAnchor(scale, anchorValue, zoomFactor) {
+ 781 |   const [domainMin, domainMax] = scale.domain();
+ 782 |   const newMin = anchorValue - (anchorValue - domainMin) / zoomFactor;
+ 783 |   const newMax = anchorValue + (domainMax - anchorValue) / zoomFactor;
+ 784 |   scale.domain([newMin, newMax]);
+ 785 | }
+ 786 | 
+ 787 | function zoomDomainAroundCenter(scale, zoomFactor) {
+ 788 |   const [domainMin, domainMax] = scale.domain();
+ 789 |   const center = (domainMin + domainMax) / 2;
+ 790 |   zoomDomainAroundAnchor(scale, center, zoomFactor);
+ 791 | }
+ 792 | 
+ 793 | function resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef) {
+ 794 |   xScale.domain(originalXDomainRef.current.slice());
+ 795 |   yScale.domain(originalYDomainRef.current.slice());
+ 796 | }
+ 797 | 
+ 798 | /* ─── Plot Controls (Button Handlers) ──────────────────────────── */
+ 799 | 
+ 800 | function buildPlotControls(
 ```
 
-### Chunk 5/5
+### Chunk 5/6
 
 ```jsx
- 801 |     .attr("class", "vertical")
- 802 |     .attr("x1", (tick) => xScale(tick))
- 803 |     .attr("x2", (tick) => xScale(tick))
- 804 |     .attr("y1", 0)
- 805 |     .attr("y2", innerHeight)
- 806 |     .attr("stroke", "#2a2a3e")
- 807 |     .attr("stroke-dasharray", "3 3");
- 808 | }
- 809 | 
- 810 | /* ─── Image Points ──────────────────────────────────────────────── */
- 811 | 
- 812 | function renderImagePoints(
- 813 |   container,
- 814 |   plotterPoints,
- 815 |   xScale,
- 816 |   yScale,
- 817 |   imageCount,
- 818 |   tooltipElement,
- 819 |   cellSize = CELL_SIZE,
- 820 | ) {
- 821 |   const tooltip = d3.select(tooltipElement);
- 822 | 
- 823 |   plotterPoints.forEach((point) => {
- 824 |     const centerX = xScale(point.x);
- 825 |     const centerY = yScale(point.y);
- 826 |     const positions = computeImagePositions(
- 827 |       centerX,
- 828 |       centerY,
- 829 |       cellSize,
- 830 |       cellSize,
- 831 |       imageCount,
- 832 |     );
- 833 | 
- 834 |     const pointGroup = container.append("g").attr("class", "image-point");
- 835 | 
- 836 |     positions.forEach((position) => {
- 837 |       pointGroup
- 838 |         .append("image")
- 839 |         .attr("href", point.image)
- 840 |         .attr("x", position.x)
- 841 |         .attr("y", position.y)
- 842 |         .attr("width", position.width)
- 843 |         .attr("height", position.height)
- 844 |         .attr("preserveAspectRatio", "xMidYMid meet")
- 845 |         .style("cursor", "pointer")
- 846 |         .on("mouseenter", function () {
- 847 |           console.log("IMAGE ENTER");
- 848 |         })
- 849 |         .on("mouseenter", function () {
- 850 |           d3.select(".d3-brush .overlay").style("pointer-events", "none");
- 851 | 
- 852 |           showTooltip(tooltip, event, point);
- 853 |         })
- 854 |         .on("mouseleave", function () {
- 855 |           d3.select(".d3-brush .overlay").style("pointer-events", "all");
- 856 | 
- 857 |           hideTooltip(tooltip);
- 858 |         });
- 859 |     });
- 860 | 
- 861 |     pointGroup
- 862 |       .on("mouseenter", (event) => showTooltip(tooltip, event, point))
- 863 |       .on("mousemove", (event) => moveTooltip(tooltip, event))
- 864 |       .on("mouseleave", () => hideTooltip(tooltip));
- 865 |   });
- 866 | }
- 867 | 
- 868 | /* ─── Tooltip ───────────────────────────────────────────────────── */
- 869 | 
- 870 | function showTooltip(tooltip, event, point) {
- 871 |   tooltip
- 872 |     .style("display", "block")
- 873 |     .html(
- 874 |       `<div class="tooltip-label">${point.label}</div>` +
- 875 |         `<div class="tooltip-meta">` +
- 876 |         `<span>Interval: ${point.meta.interval}s</span>` +
- 877 |         `<span>Angle: ${point.meta.angle}°</span>` +
- 878 |         `<span>Quality: ${point.meta.quality}</span>` +
- 879 |         `</div>`,
- 880 |     );
- 881 | 
- 882 |   moveTooltip(tooltip, event);
- 883 | }
- 884 | 
- 885 | function moveTooltip(tooltip, event) {
- 886 |   const containerRect = event.currentTarget
- 887 |     .closest(".viewer-container")
- 888 |     ?.getBoundingClientRect();
- 889 |   if (!containerRect) return;
- 890 | 
- 891 |   tooltip
- 892 |     .style("left", `${event.clientX - containerRect.left + 12}px`)
- 893 |     .style("top", `${event.clientY - containerRect.top - 10}px`);
- 894 | }
- 895 | 
- 896 | function hideTooltip(tooltip) {
- 897 |   tooltip.style("display", "none");
- 898 | }
- 899 | 
- 900 | export default D3Plotter;
- 901 | 
+ 801 |   xScale,
+ 802 |   yScale,
+ 803 |   originalXDomainRef,
+ 804 |   originalYDomainRef,
+ 805 |   redrawCallback,
+ 806 |   chartId,
+ 807 | ) {
+ 808 |   return {
+ 809 |     zoomIn: () => {
+ 810 |       logChartInteractionEvent({
+ 811 |         interactionType: "ZOOM_IN",
+ 812 |         visualizationLibrary: "D3",
+ 813 |         interactionSource: "button",
+ 814 |       });
+ 815 |       zoomDomainAroundCenter(xScale, ZOOM_SCALE_FACTOR);
+ 816 |       zoomDomainAroundCenter(yScale, ZOOM_SCALE_FACTOR);
+ 817 |       updateChartViewport(chartId, {
+ 818 |         xDomain: xScale.domain().slice(),
+ 819 |         yDomain: yScale.domain().slice(),
+ 820 |       });
+ 821 |       redrawCallback();
+ 822 |     },
+ 823 |     zoomOut: () => {
+ 824 |       if (
+ 825 |         isD3AtBaseZoomOrBelow(
+ 826 |           xScale,
+ 827 |           yScale,
+ 828 |           originalXDomainRef,
+ 829 |           originalYDomainRef,
+ 830 |         )
+ 831 |       ) {
+ 832 |         return;
+ 833 |       }
+ 834 |       logChartInteractionEvent({
+ 835 |         interactionType: "ZOOM_OUT",
+ 836 |         visualizationLibrary: "D3",
+ 837 |         interactionSource: "button",
+ 838 |       });
+ 839 |       zoomDomainAroundCenter(xScale, 1 / ZOOM_SCALE_FACTOR);
+ 840 |       zoomDomainAroundCenter(yScale, 1 / ZOOM_SCALE_FACTOR);
+ 841 | 
+ 842 |       if (
+ 843 |         isD3AtBaseZoomOrBelow(
+ 844 |           xScale,
+ 845 |           yScale,
+ 846 |           originalXDomainRef,
+ 847 |           originalYDomainRef,
+ 848 |         )
+ 849 |       ) {
+ 850 |         xScale.domain(originalXDomainRef.current.slice());
+ 851 |         yScale.domain(originalYDomainRef.current.slice());
+ 852 |       }
+ 853 | 
+ 854 |       updateChartViewport(chartId, {
+ 855 |         xDomain: xScale.domain().slice(),
+ 856 |         yDomain: yScale.domain().slice(),
+ 857 |       });
+ 858 | 
+ 859 |       redrawCallback();
+ 860 |     },
+ 861 |     resetZoom: () => {
+ 862 |       logChartInteractionEvent({
+ 863 |         interactionType: "RESET",
+ 864 |         visualizationLibrary: "D3",
+ 865 |         interactionSource: "button",
+ 866 |       });
+ 867 |       resetDomains(xScale, yScale, originalXDomainRef, originalYDomainRef);
+ 868 |       updateChartViewport(chartId, {
+ 869 |         xDomain: originalXDomainRef.current.slice(),
+ 870 |         yDomain: originalYDomainRef.current.slice(),
+ 871 |       });
+ 872 |       redrawCallback();
+ 873 |     },
+ 874 |   };
+ 875 | }
+ 876 | 
+ 877 | /* ─── Content Redraw Pipeline ───────────────────────────────────── */
+ 878 | 
+ 879 | function redrawPlotContent(context) {
+ 880 |   const {
+ 881 |     contentGroup,
+ 882 |     rootGroup,
+ 883 |     xScale,
+ 884 |     yScale,
+ 885 |     innerWidth,
+ 886 |     innerHeight,
+ 887 |     plotterPoints,
+ 888 |     imageCount,
+ 889 |     tooltipElement,
+ 890 |     baseCellSize,
+ 891 |     originalDomainSpanX,
+ 892 |     originalDomainSpanY,
+ 893 |   } = context;
+ 894 | 
+ 895 |   /* Compute zoom factor from domain ratio so images grow when zoomed in,
+ 896 |      matching the transform-based magnification of Recharts/Konva/PixiJS. */
+ 897 |   const currentSpanX = xScale.domain()[1] - xScale.domain()[0];
+ 898 |   const currentSpanY = yScale.domain()[1] - yScale.domain()[0];
+ 899 |   const zoomFactorX = originalDomainSpanX / currentSpanX;
+ 900 |   const zoomFactorY = originalDomainSpanY / currentSpanY;
+ 901 |   const zoomFactor = Math.min(zoomFactorX, zoomFactorY);
+ 902 | 
+ 903 |   const zoomedCellSize = baseCellSize * zoomFactor;
+ 904 | 
+ 905 |   const visiblePoints = filterVisiblePoints(
+ 906 |     plotterPoints,
+ 907 |     (val) => xScale(val),
+ 908 |     (val) => yScale(val),
+ 909 |     innerWidth,
+ 910 |     innerHeight,
+ 911 |     zoomedCellSize,
+ 912 |   );
+ 913 | 
+ 914 |   const effectiveImageCount = computeEffectiveImageCount(
+ 915 |     zoomedCellSize,
+ 916 |     imageCount,
+ 917 |   );
+ 918 | 
+ 919 |   contentGroup.selectAll(".grid-lines, .image-point").remove();
+ 920 | 
+ 921 |   renderGrid(contentGroup, xScale, yScale, innerWidth, innerHeight);
+ 922 |   renderImagePoints(
+ 923 |     contentGroup,
+ 924 |     visiblePoints,
+ 925 |     xScale,
+ 926 |     yScale,
+ 927 |     effectiveImageCount,
+ 928 |     tooltipElement,
+ 929 |     zoomedCellSize,
+ 930 |   );
+ 931 | 
+ 932 |   updateAxes(rootGroup, xScale, yScale);
+ 933 | }
+ 934 | 
+ 935 | /* ─── Axes ──────────────────────────────────────────────────────── */
+ 936 | 
+ 937 | function renderAxes(container, xScale, yScale, innerWidth, innerHeight) {
+ 938 |   container
+ 939 |     .append("g")
+ 940 |     .attr("class", "x-axis")
+ 941 |     .attr("transform", `translate(0,${innerHeight})`)
+ 942 |     .call(d3.axisBottom(xScale).ticks(8))
+ 943 |     .selectAll("text")
+ 944 |     .attr("fill", "#888");
+ 945 | 
+ 946 |   container
+ 947 |     .append("g")
+ 948 |     .attr("class", "y-axis")
+ 949 |     .call(d3.axisLeft(yScale).ticks(6))
+ 950 |     .selectAll("text")
+ 951 |     .attr("fill", "#888");
+ 952 | 
+ 953 |   styleAxisElements(container);
+ 954 | }
+ 955 | 
+ 956 | function updateAxes(container, xScale, yScale) {
+ 957 |   container.select(".x-axis").call(d3.axisBottom(xScale).ticks(8));
+ 958 |   container.select(".y-axis").call(d3.axisLeft(yScale).ticks(6));
+ 959 | 
+ 960 |   container.selectAll(".x-axis text, .y-axis text").attr("fill", "#888");
+ 961 |   styleAxisElements(container);
+ 962 | }
+ 963 | 
+ 964 | function styleAxisElements(container) {
+ 965 |   container.selectAll(".x-axis line, .y-axis line").attr("stroke", "#555");
+ 966 |   container.selectAll(".x-axis path, .y-axis path").attr("stroke", "#555");
+ 967 | }
+ 968 | 
+ 969 | /* ─── Grid ──────────────────────────────────────────────────────── */
+ 970 | 
+ 971 | function renderGrid(container, xScale, yScale, innerWidth, innerHeight) {
+ 972 |   const gridGroup = container.append("g").attr("class", "grid-lines");
+ 973 | 
+ 974 |   gridGroup
+ 975 |     .selectAll("line.horizontal")
+ 976 |     .data(yScale.ticks(6))
+ 977 |     .enter()
+ 978 |     .append("line")
+ 979 |     .attr("class", "horizontal")
+ 980 |     .attr("x1", 0)
+ 981 |     .attr("x2", innerWidth)
+ 982 |     .attr("y1", (tick) => yScale(tick))
+ 983 |     .attr("y2", (tick) => yScale(tick))
+ 984 |     .attr("stroke", "#2a2a3e")
+ 985 |     .attr("stroke-dasharray", "3 3");
+ 986 | 
+ 987 |   gridGroup
+ 988 |     .selectAll("line.vertical")
+ 989 |     .data(xScale.ticks(8))
+ 990 |     .enter()
+ 991 |     .append("line")
+ 992 |     .attr("class", "vertical")
+ 993 |     .attr("x1", (tick) => xScale(tick))
+ 994 |     .attr("x2", (tick) => xScale(tick))
+ 995 |     .attr("y1", 0)
+ 996 |     .attr("y2", innerHeight)
+ 997 |     .attr("stroke", "#2a2a3e")
+ 998 |     .attr("stroke-dasharray", "3 3");
+ 999 | }
+1000 | 
+```
+
+### Chunk 6/6
+
+```jsx
+1001 | /* ─── Image Points ──────────────────────────────────────────────── */
+1002 | 
+1003 | function renderImagePoints(
+1004 |   container,
+1005 |   plotterPoints,
+1006 |   xScale,
+1007 |   yScale,
+1008 |   imageCount,
+1009 |   tooltipElement,
+1010 |   cellSize = CELL_SIZE,
+1011 | ) {
+1012 |   const tooltip = d3.select(tooltipElement);
+1013 | 
+1014 |   plotterPoints.forEach((point) => {
+1015 |     const centerX = xScale(point.x);
+1016 |     const centerY = yScale(point.y);
+1017 |     const positions = computeImagePositions(
+1018 |       centerX,
+1019 |       centerY,
+1020 |       cellSize,
+1021 |       cellSize,
+1022 |       imageCount,
+1023 |     );
+1024 | 
+1025 |     const pointGroup = container.append("g").attr("class", "image-point");
+1026 | 
+1027 |     positions.forEach((position) => {
+1028 |       pointGroup
+1029 |         .append("image")
+1030 |         .attr("href", point.image)
+1031 |         .attr("x", position.x)
+1032 |         .attr("y", position.y)
+1033 |         .attr("width", position.width)
+1034 |         .attr("height", position.height)
+1035 |         .attr("preserveAspectRatio", "xMidYMid meet")
+1036 |         .style("cursor", "pointer")
+1037 |         .on("mouseenter", function () {
+1038 |           console.log("IMAGE ENTER");
+1039 |         })
+1040 |         .on("mouseenter", function (event) {
+1041 |           d3.select(".d3-brush .overlay").style("pointer-events", "none");
+1042 | 
+1043 |           showTooltip(tooltip, event, point);
+1044 |         })
+1045 |         .on("mouseleave", function () {
+1046 |           d3.select(".d3-brush .overlay").style("pointer-events", "all");
+1047 | 
+1048 |           hideTooltip(tooltip);
+1049 |         });
+1050 |     });
+1051 | 
+1052 |     pointGroup
+1053 |       .on("mouseenter", (event) => showTooltip(tooltip, event, point))
+1054 |       .on("mousemove", (event) => moveTooltip(tooltip, event))
+1055 |       .on("mouseleave", () => hideTooltip(tooltip));
+1056 |   });
+1057 | }
+1058 | 
+1059 | /* ─── Tooltip ───────────────────────────────────────────────────── */
+1060 | 
+1061 | function showTooltip(tooltip, event, point) {
+1062 |   tooltip
+1063 |     .style("display", "block")
+1064 |     .html(
+1065 |       `<div class="tooltip-label">${point.label}</div>` +
+1066 |         `<div class="tooltip-meta">` +
+1067 |         `<span>Interval: ${point.meta.interval}s</span>` +
+1068 |         `<span>Angle: ${point.meta.angle}°</span>` +
+1069 |         `<span>Quality: ${point.meta.quality}</span>` +
+1070 |         `</div>`,
+1071 |     );
+1072 | 
+1073 |   moveTooltip(tooltip, event);
+1074 | }
+1075 | 
+1076 | function moveTooltip(tooltip, event) {
+1077 |   const containerRect = event.currentTarget
+1078 |     .closest(".viewer-container")
+1079 |     ?.getBoundingClientRect();
+1080 |   if (!containerRect) return;
+1081 | 
+1082 |   tooltip
+1083 |     .style("left", `${event.clientX - containerRect.left + 12}px`)
+1084 |     .style("top", `${event.clientY - containerRect.top - 10}px`);
+1085 | }
+1086 | 
+1087 | function hideTooltip(tooltip) {
+1088 |   tooltip.style("display", "none");
+1089 | }
+1090 | 
+1091 | export default D3Plotter;
+1092 | 
 ```
 
 
@@ -2916,6 +3157,143 @@ imagdPlotting
 
 ---
 
+## 📄 src\components\ImageCanvasLayer.jsx
+**hash:** `19ba8cf2`
+
+### Chunk 1/1
+
+```jsx
+   1 | import { useEffect, useRef } from "react";
+   2 | import { getImageBitmapLoD } from "../lib/imageBitmapCache";
+   3 | import { PLOT_MARGIN } from "../lib/constants";
+   4 | import { computeImagePositions } from "../lib/gridLayout";
+   5 | 
+   6 | export default function ImageCanvasLayer({
+   7 |   points,
+   8 |   baseXScale,
+   9 |   baseYScale,
+  10 |   cellSize,
+  11 |   transform,
+  12 |   imageCount,
+  13 | }) {
+  14 |   const canvasRef = useRef(null);
+  15 | 
+  16 |   useEffect(() => {
+  17 |     if (!canvasRef.current || !points.length) return;
+  18 | 
+  19 |     const canvas = canvasRef.current;
+  20 |     const ctx = canvas.getContext("2d");
+  21 | 
+  22 |     const dpr = window.devicePixelRatio || 1;
+  23 |     const width = canvas.clientWidth;
+  24 |     const height = canvas.clientHeight;
+  25 | 
+  26 |     canvas.width = width * dpr;
+  27 |     canvas.height = height * dpr;
+  28 | 
+  29 |     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  30 | 
+  31 |     ctx.clearRect(0, 0, width, height);
+  32 | 
+  33 |     let cancelled = false;
+  34 | 
+  35 |     const render = async () => {
+  36 |       const renderedPx = cellSize * transform.scale;
+  37 |       const uniqueUrls = [...new Set(points.map((p) => p.image))];
+  38 | 
+  39 |       const bitmapMap = new Map();
+  40 | 
+  41 |       await Promise.all(
+  42 |         uniqueUrls.map(async (url) => {
+  43 |           try {
+  44 |             const bmp = await getImageBitmapLoD(url, renderedPx);
+  45 |             bitmapMap.set(url, bmp);
+  46 |           } catch {
+  47 |             // ignore
+  48 |           }
+  49 |         }),
+  50 |       );
+  51 | 
+  52 |       if (cancelled) return;
+  53 | 
+  54 |       for (const point of points) {
+  55 |         const x = transform.x + baseXScale(point.scaledX) * transform.scale;
+  56 |         const y = transform.y + baseYScale(point.scaledY) * transform.scale;
+  57 | 
+  58 |         if (renderedPx < 6) {
+  59 |           ctx.fillStyle = "#2a3a5a";
+  60 |           ctx.fillRect(
+  61 |             x - renderedPx / 2,
+  62 |             y - renderedPx / 2,
+  63 |             renderedPx,
+  64 |             renderedPx,
+  65 |           );
+  66 |           continue;
+  67 |         }
+  68 | 
+  69 |         const bitmap = bitmapMap.get(point.image);
+  70 | 
+  71 |         if (!bitmap) {
+  72 |           ctx.fillStyle = "#444";
+  73 |           ctx.fillRect(
+  74 |             x - renderedPx / 2,
+  75 |             y - renderedPx / 2,
+  76 |             renderedPx,
+  77 |             renderedPx,
+  78 |           );
+  79 |           continue;
+  80 |         }
+  81 | 
+  82 |         const positions = computeImagePositions(
+  83 |           x,
+  84 |           y,
+  85 |           renderedPx,
+  86 |           renderedPx,
+  87 |           imageCount,
+  88 |         );
+  89 | 
+  90 |         for (const pos of positions) {
+  91 |           ctx.drawImage(bitmap, pos.x, pos.y, pos.width, pos.height);
+  92 |         }
+  93 |       }
+  94 |     };
+  95 | 
+  96 |     render();
+  97 | 
+  98 |     return () => {
+  99 |       cancelled = true;
+ 100 |     };
+ 101 |   }, [
+ 102 |     points,
+ 103 |     baseXScale,
+ 104 |     baseYScale,
+ 105 |     cellSize,
+ 106 |     transform.scale,
+ 107 |     transform.x,
+ 108 |     transform.y,
+ 109 |     imageCount,
+ 110 |   ]);
+ 111 | 
+ 112 |   return (
+ 113 |     <canvas
+ 114 |       ref={canvasRef}
+ 115 |       style={{
+ 116 |         position: "absolute",
+ 117 |         left: `${PLOT_MARGIN.left}px`,
+ 118 |         top: `${PLOT_MARGIN.top}px`,
+ 119 |         width: `calc(100% - ${PLOT_MARGIN.left + PLOT_MARGIN.right}px)`,
+ 120 |         height: `calc(100% - ${PLOT_MARGIN.top + PLOT_MARGIN.bottom}px)`,
+ 121 |         pointerEvents: "none",
+ 122 |       }}
+ 123 |     />
+ 124 |   );
+ 125 | }
+ 126 | 
+```
+
+
+---
+
 ## 📄 src\components\ImageCountSelector.jsx
 **hash:** `3810d2f1`
 
@@ -2958,13 +3336,13 @@ imagdPlotting
 ---
 
 ## 📄 src\components\KonvaPlotter.jsx
-**hash:** `3eb8d23`
+**hash:** `739264ae`
 
-### Chunk 1/4
+### Chunk 1/6
 
 ```jsx
-   1 | /* eslint-disable no-useless-assignment */
-   2 | import { useState, useRef, useCallback, useEffect } from "react";
+   1 | /* eslint-disable react-hooks/refs */
+   2 | import { useState, useRef, useCallback, useEffect, useMemo } from "react";
    3 | import {
    4 |   Stage,
    5 |   Layer,
@@ -2976,790 +3354,1084 @@ imagdPlotting
   11 | } from "react-konva";
   12 | import { usePlotterData } from "../lib/plotterData";
   13 | import { computeImagePositions } from "../lib/gridLayout";
-  14 | import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
-  15 | import PlotterControls from "./PlotterControls";
-  16 | import {
-  17 |   getChartViewport,
-  18 |   updateChartViewport,
-  19 | } from "../lib/chartViewportStore";
-  20 | 
-  21 | const AXIS_TICK_COUNT = 8;
-  22 | const EXTENT_PADDING_RATIO = 0.2;
-  23 | const EXTENT_FALLBACK_PADDING = 5;
-  24 | const ZOOM_STEP = 1.5;
-  25 | const PINCH_ZOOM_SENSITIVITY = 0.01;
-  26 | const ZOOM_MIN = 0.3;
-  27 | const ZOOM_MAX = 10;
-  28 | const GRID_COLOR = "#2a2a3e";
-  29 | const AXIS_LINE_COLOR = "#555555";
-  30 | const TICK_LABEL_COLOR = "#aaaaaa";
-  31 | const TICK_LABEL_FONT_SIZE = 11;
-  32 | 
-  33 | function KonvaPlotter({ chartId, imageCount, xGap, yGap }) {
-  34 |   const { plotterPoints, isLoading, loadError } = usePlotterData();
-  35 | 
-  36 |   if (isLoading) return <div className="plotter-loading">Loading data…</div>;
-  37 |   if (loadError) return <div className="plotter-error">Error: {loadError}</div>;
-  38 | 
-  39 |   return (
-  40 |     <KonvaCanvas
-  41 |       plotterPoints={plotterPoints}
-  42 |       imageCount={imageCount}
-  43 |       xGap={xGap}
-  44 |       yGap={yGap}
-  45 |       chartId={chartId}
-  46 |     />
-  47 |   );
-  48 | }
-  49 | 
-  50 | function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
-  51 |   const savedViewport = getChartViewport(chartId);
-  52 |   const [contentScale, setContentScale] = useState(savedViewport.scale ?? 1);
-  53 |   const [contentOffset, setContentOffset] = useState({
-  54 |     x: savedViewport.translateX ?? 0,
-  55 |     y: savedViewport.translateY ?? 0,
-  56 |   });
-  57 |   const [hoveredPoint, setHoveredPoint] = useState(null);
-  58 |   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
-  59 |   const [isDragging, setIsDragging] = useState(false);
-  60 |   const draggableGroupRef = useRef(null);
-  61 |   const stageRef = useRef(null);
-  62 | 
-  63 |   const innerWidth =
-  64 |     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
-  65 |   const innerHeight =
-  66 |     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
-  67 | 
-  68 |   const { xScale, yScale, xExtent, yExtent } = buildScales(
-  69 |     plotterPoints,
-  70 |     innerWidth,
-  71 |     innerHeight,
-  72 |   );
+  14 | import {
+  15 |   CELL_SIZE,
+  16 |   PLOT_DIMENSIONS,
+  17 |   PLOT_MARGIN,
+  18 |   DATA_POINT_LIMITS,
+  19 | } from "../lib/constants";
+  20 | import {
+  21 |   computeAdaptiveCellSize,
+  22 |   filterVisiblePoints,
+  23 |   computeEffectiveImageCount,
+  24 | } from "../lib/densityLayout";
+  25 | import PlotterControls from "./PlotterControls";
+  26 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+  27 | import { useInteractionMode } from "../lib/interactionMode";
+  28 | import {
+  29 |   getChartViewport,
+  30 |   updateChartViewport,
+  31 | } from "../lib/chartViewportStore";
+  32 | import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
+  33 | 
+  34 | const AXIS_TICK_COUNT = 8;
+  35 | const EXTENT_PADDING_RATIO = 0.2;
+  36 | const EXTENT_FALLBACK_PADDING = 5;
+  37 | const ZOOM_STEP = 1.5;
+  38 | const PINCH_ZOOM_SENSITIVITY = 0.01;
+  39 | const ZOOM_MIN = 1;
+  40 | const MIN_ZOOM_SCALE = 1.001;
+  41 | const ZOOM_MAX = 100000;
+  42 | const GRID_COLOR = "#2a2a3e";
+  43 | const AXIS_LINE_COLOR = "#555555";
+  44 | const TICK_LABEL_COLOR = "#aaaaaa";
+  45 | const TICK_LABEL_FONT_SIZE = 11;
+  46 | const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
+  47 | const BRUSH_STROKE = "#4493ff";
+  48 | const BRUSH_STROKE_WIDTH = 1.5;
+  49 | const BRUSH_MIN_PIXELS = 5;
+  50 | 
+  51 | function KonvaPlotter({ chartId, imageCount, dataPointCount }) {
+  52 |   const {
+  53 |     plotterPoints: fetchedPoints,
+  54 |     isLoading,
+  55 |     loadError,
+  56 |   } = usePlotterData();
+  57 | 
+  58 |   const syntheticPoints = useMemo(() => {
+  59 |     return generateSyntheticPoints(
+  60 |       Math.max(
+  61 |         DATA_POINT_LIMITS.min,
+  62 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
+  63 |       ),
+  64 |     );
+  65 |   }, [dataPointCount]);
+  66 | 
+  67 |   const plotterPoints = syntheticPoints || fetchedPoints;
+  68 | 
+  69 |   if (!syntheticPoints && isLoading)
+  70 |     return <div className="plotter-loading">Loading data…</div>;
+  71 |   if (!syntheticPoints && loadError)
+  72 |     return <div className="plotter-error">Error: {loadError}</div>;
   73 | 
-  74 |   useEffect(() => {
-  75 |     if (!chartId) return;
-  76 | 
-  77 |     updateChartViewport(chartId, {
-  78 |       scale: contentScale,
-  79 |       translateX: contentOffset.x,
-  80 |       translateY: contentOffset.y,
-  81 |     });
-  82 |   }, [chartId, contentScale, contentOffset]);
-  83 | 
-  84 |   const visibleDomain = computeVisibleDomain(
-  85 |     xExtent,
-  86 |     yExtent,
-  87 |     contentOffset,
-  88 |     contentScale,
-  89 |     innerWidth,
-  90 |     innerHeight,
-  91 |   );
-  92 | 
-  93 |   const handleWheel = useCallback(
-  94 |     (event) => {
-  95 |       event.evt.preventDefault();
-  96 |       const stage = event.target.getStage();
-  97 |       const pointerPosition = stage.getPointerPosition();
-  98 | 
-  99 |       if (!isPointerInsidePlotArea(pointerPosition, innerWidth, innerHeight))
- 100 |         return;
- 101 | 
- 102 |       const nativeEvent = event.evt;
- 103 |       const isPinchGesture = nativeEvent.ctrlKey;
- 104 |       const scaleDelta = computeWheelScaleDelta(
- 105 |         nativeEvent.deltaY,
- 106 |         isPinchGesture,
- 107 |       );
- 108 |       const newScale = clampScale(contentScale * scaleDelta);
- 109 | 
- 110 |       const mouseRelX = pointerPosition.x - PLOT_MARGIN.left - contentOffset.x;
- 111 |       const mouseRelY = pointerPosition.y - PLOT_MARGIN.top - contentOffset.y;
- 112 | 
- 113 |       const nextOffsetX =
- 114 |         contentOffset.x - mouseRelX * (newScale / contentScale - 1);
- 115 |       const nextOffsetY =
- 116 |         contentOffset.y - mouseRelY * (newScale / contentScale - 1);
+  74 |   return (
+  75 |     <KonvaCanvas
+  76 |       chartId={chartId}
+  77 |       plotterPoints={plotterPoints}
+  78 |       imageCount={imageCount}
+  79 |     />
+  80 |   );
+  81 | }
+  82 | 
+  83 | function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
+  84 |   /* Hot-path viewport state stored in refs — mutations never trigger React
+  85 |      reconciliation. A RAF-throttled forceUpdate flushes the view at ≤60 fps. */
+  86 |   const savedViewportRef = useRef(getChartViewport(chartId) ?? {});
+  87 | 
+  88 |   const initialScale = Math.max(savedViewportRef.current.scale ?? 1, ZOOM_MIN);
+  89 | 
+  90 |   const scaleRef = useRef(initialScale);
+  91 | 
+  92 |   const offsetRef = useRef(
+  93 |     initialScale <= MIN_ZOOM_SCALE
+  94 |       ? { x: 0, y: 0 }
+  95 |       : {
+  96 |           x: savedViewportRef.current.translateX ?? 0,
+  97 |           y: savedViewportRef.current.translateY ?? 0,
+  98 |         },
+  99 |   );
+ 100 | 
+ 101 |   const rafPendingRef = useRef(false);
+ 102 |   const [, forceUpdate] = useState(0);
+ 103 |   const rafIdRef = useRef(null);
+ 104 |   const [hoveredPoint, setHoveredPoint] = useState(null);
+ 105 |   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+ 106 |   const [isDragging, setIsDragging] = useState(false);
+ 107 |   const [brushRect, setBrushRect] = useState(null);
+ 108 | 
+ 109 |   const stageRef = useRef(null);
+ 110 |   const brushStartRef = useRef(null);
+ 111 |   const dragRef = useRef({
+ 112 |     dragging: false,
+ 113 |     startX: 0,
+ 114 |     startY: 0,
+ 115 |     startOffset: { x: 0, y: 0 },
+ 116 |   });
  117 | 
- 118 |       const clampedOffset = clampContentOffset(
- 119 |         nextOffsetX,
- 120 |         nextOffsetY,
- 121 |         newScale,
- 122 |         innerWidth,
- 123 |         innerHeight,
- 124 |       );
- 125 | 
- 126 |       setContentScale(newScale);
- 127 |       setContentOffset(clampedOffset);
- 128 |       updateChartViewport(chartId, {
- 129 |         scale: newScale,
- 130 |         translateX: clampedOffset.x,
- 131 |         translateY: clampedOffset.y,
- 132 |       });
- 133 |     },
- 134 |     [
- 135 |       innerWidth,
- 136 |       innerHeight,
- 137 |       contentScale,
- 138 |       contentOffset.x,
- 139 |       contentOffset.y,
- 140 |       chartId,
- 141 |     ],
- 142 |   );
- 143 | 
- 144 |   const handleContentDragStart = useCallback(() => {
- 145 |     setIsDragging(true);
- 146 |   }, []);
- 147 | 
- 148 |   const handleContentDragMove = useCallback(
- 149 |     (event) => {
- 150 |       const node = event.target;
- 151 |       const offsetX = node.x() - PLOT_MARGIN.left;
- 152 |       const offsetY = node.y() - PLOT_MARGIN.top;
- 153 | 
- 154 |       const clamped = clampContentOffset(
- 155 |         offsetX,
- 156 |         offsetY,
- 157 |         contentScale,
- 158 |         innerWidth,
- 159 |         innerHeight,
- 160 |       );
- 161 | 
- 162 |       node.x(PLOT_MARGIN.left + clamped.x);
- 163 |       node.y(PLOT_MARGIN.top + clamped.y);
- 164 |     },
- 165 |     [contentScale, innerWidth, innerHeight],
- 166 |   );
- 167 | 
- 168 |   const handleContentDragEnd = useCallback(
- 169 |     (event) => {
- 170 |       setIsDragging(false);
- 171 | 
- 172 |       const nodeX = event.target.x();
- 173 |       const nodeY = event.target.y();
- 174 | 
- 175 |       const nextOffset = {
- 176 |         x: nodeX - PLOT_MARGIN.left,
- 177 |         y: nodeY - PLOT_MARGIN.top,
- 178 |       };
- 179 | 
- 180 |       setContentOffset(nextOffset);
- 181 | 
- 182 |       updateChartViewport(chartId, {
- 183 |         scale: contentScale,
- 184 |         translateX: nextOffset.x,
- 185 |         translateY: nextOffset.y,
- 186 |       });
- 187 |     },
- 188 |     [chartId, contentScale],
- 189 |   );
- 190 | 
- 191 |   const handleZoomIn = useCallback(() => {
- 192 |     const centerX = innerWidth / 2;
- 193 |     const centerY = innerHeight / 2;
- 194 |     const newScale = clampScale(contentScale * ZOOM_STEP);
- 195 | 
- 196 |     const nextOffsetX =
- 197 |       contentOffset.x - centerX * (newScale / contentScale - 1);
- 198 |     const nextOffsetY =
- 199 |       contentOffset.y - centerY * (newScale / contentScale - 1);
- 200 |     const clampedOffset = clampContentOffset(
+ 118 |   const persistViewport = useCallback(() => {
+ 119 |     if (!chartId) return;
+ 120 |     if (scaleRef.current == null || !offsetRef.current) return;
+ 121 | 
+ 122 |     updateChartViewport(chartId, {
+ 123 |       scale: scaleRef.current,
+ 124 |       translateX: offsetRef.current.x,
+ 125 |       translateY: offsetRef.current.y,
+ 126 |     });
+ 127 |   }, [chartId]);
+ 128 | 
+ 129 |   /* Schedule a single React flush per animation frame. */
+ 130 |   const scheduleUpdate = useCallback(() => {
+ 131 |     if (rafPendingRef.current) return;
+ 132 | 
+ 133 |     rafPendingRef.current = true;
+ 134 | 
+ 135 |     rafIdRef.current = requestAnimationFrame(() => {
+ 136 |       rafPendingRef.current = false;
+ 137 |       rafIdRef.current = null;
+ 138 |       forceUpdate((n) => n + 1);
+ 139 |     });
+ 140 |   }, []);
+ 141 | 
+ 142 |   const { interactionMode, setInteractionMode, isZoomMode, isPanMode } =
+ 143 |     useInteractionMode();
+ 144 | 
+ 145 |   const innerWidth =
+ 146 |     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+ 147 |   const innerHeight =
+ 148 |     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+ 149 | 
+ 150 |   const contentScale = scaleRef.current ?? 1;
+ 151 |   const contentOffset = offsetRef.current ?? { x: 0, y: 0 };
+ 152 | 
+ 153 |   const { xScale, yScale, xExtent, yExtent } = buildScales(
+ 154 |     plotterPoints,
+ 155 |     innerWidth,
+ 156 |     innerHeight,
+ 157 |   );
+ 158 | 
+ 159 |   /* Domain-based visible region — shrinks as zoom increases, matching D3. */
+ 160 |   const visibleDomain = computeVisibleDomain(
+ 161 |     xExtent,
+ 162 |     yExtent,
+ 163 |     contentOffset,
+ 164 |     contentScale,
+ 165 |     innerWidth,
+ 166 |     innerHeight,
+ 167 |   );
+ 168 | 
+ 169 |   /* Dynamic scales recomputed from the visible domain — no matrix transform. */
+ 170 |   const dynamicXScale = buildLinearScale(
+ 171 |     visibleDomain.xMin,
+ 172 |     visibleDomain.xMax,
+ 173 |     0,
+ 174 |     innerWidth,
+ 175 |   );
+ 176 |   const dynamicYScale = buildLinearScale(
+ 177 |     visibleDomain.yMin,
+ 178 |     visibleDomain.yMax,
+ 179 |     innerHeight,
+ 180 |     0,
+ 181 |   );
+ 182 | 
+ 183 |   /* Cancel in-progress brush when switching to pan mode. */
+ 184 |   useEffect(() => {
+ 185 |     if (isPanMode) {
+ 186 |       brushStartRef.current = null;
+ 187 |       // eslint-disable-next-line react-hooks/set-state-in-effect
+ 188 |       setBrushRect(null);
+ 189 |     }
+ 190 |   }, [isPanMode]);
+ 191 | 
+ 192 |   useEffect(() => {
+ 193 |     return () => {
+ 194 |       /**
+ 195 |        * Keep only lightweight interaction state.
+ 196 |        * This allows restoring zoom/pan when chart remounts.
+ 197 |        */
+ 198 |       if (chartId && scaleRef.current != null && offsetRef.current) {
+ 199 |         updateChartViewport(chartId, {
+ 200 |           scale: scaleRef.current,
 ```
 
-### Chunk 2/4
+### Chunk 2/6
 
 ```jsx
- 201 |       nextOffsetX,
- 202 |       nextOffsetY,
- 203 |       newScale,
- 204 |       innerWidth,
- 205 |       innerHeight,
- 206 |     );
- 207 | 
- 208 |     setContentScale(newScale);
- 209 |     setContentOffset(clampedOffset);
- 210 |     updateChartViewport(chartId, {
- 211 |       scale: newScale,
- 212 |       translateX: clampedOffset.x,
- 213 |       translateY: clampedOffset.y,
- 214 |     });
- 215 |   }, [
- 216 |     innerWidth,
- 217 |     innerHeight,
- 218 |     contentScale,
- 219 |     contentOffset.x,
- 220 |     contentOffset.y,
- 221 |     chartId,
- 222 |   ]);
- 223 | 
- 224 |   const handleZoomOut = useCallback(() => {
- 225 |     const centerX = innerWidth / 2;
- 226 |     const centerY = innerHeight / 2;
- 227 |     const newScale = clampScale(contentScale / ZOOM_STEP);
- 228 | 
- 229 |     const nextOffsetX =
- 230 |       contentOffset.x - centerX * (newScale / contentScale - 1);
- 231 |     const nextOffsetY =
- 232 |       contentOffset.y - centerY * (newScale / contentScale - 1);
- 233 |     const clampedOffset = clampContentOffset(
- 234 |       nextOffsetX,
- 235 |       nextOffsetY,
- 236 |       newScale,
- 237 |       innerWidth,
- 238 |       innerHeight,
- 239 |     );
- 240 | 
- 241 |     setContentScale(newScale);
- 242 |     setContentOffset(clampedOffset);
- 243 |     updateChartViewport(chartId, {
- 244 |       scale: newScale,
- 245 |       translateX: clampedOffset.x,
- 246 |       translateY: clampedOffset.y,
- 247 |     });
- 248 |   }, [
- 249 |     innerWidth,
- 250 |     innerHeight,
- 251 |     contentScale,
- 252 |     contentOffset.x,
- 253 |     contentOffset.y,
- 254 |     chartId,
- 255 |   ]);
- 256 | 
- 257 |   const handleReset = useCallback(() => {
- 258 |     setContentScale(1);
- 259 |     setContentOffset({ x: 0, y: 0 });
- 260 | 
- 261 |     updateChartViewport(chartId, {
- 262 |       scale: 1,
- 263 |       translateX: 0,
- 264 |       translateY: 0,
- 265 |     });
- 266 |   }, [chartId]);
+ 201 |           translateX: offsetRef.current.x,
+ 202 |           translateY: offsetRef.current.y,
+ 203 |         });
+ 204 |       }
+ 205 | 
+ 206 |       /**
+ 207 |        * Release temporary runtime state.
+ 208 |        */
+ 209 |       if (rafIdRef.current) {
+ 210 |         cancelAnimationFrame(rafIdRef.current);
+ 211 |         rafIdRef.current = null;
+ 212 |       }
+ 213 | 
+ 214 |       rafPendingRef.current = false;
+ 215 | 
+ 216 |       brushStartRef.current = null;
+ 217 | 
+ 218 |       dragRef.current = {
+ 219 |         dragging: false,
+ 220 |         startX: 0,
+ 221 |         startY: 0,
+ 222 |         startOffset: { x: 0, y: 0 },
+ 223 |       };
+ 224 | 
+ 225 |       stageRef.current = null;
+ 226 | 
+ 227 |       /**
+ 228 |        * Do NOT remove chartViewportStore entry here.
+ 229 |        * App.jsx will prune it only when the chart becomes disabled / removed.
+ 230 |        */
+ 231 |     };
+ 232 |   }, [chartId]);
+ 233 | 
+ 234 |   /* Base cell size computed once from the full dataset. */
+ 235 |   const adaptiveCellSizeBase = useMemo(
+ 236 |     () => computeAdaptiveCellSize(plotterPoints, xScale, yScale),
+ 237 |     [plotterPoints, xScale, yScale],
+ 238 |   );
+ 239 | 
+ 240 |   /* Zoom-scaled cell size — grows as domain shrinks. */
+ 241 |   const adaptiveCellSizeForRender = adaptiveCellSizeBase * contentScale;
+ 242 | 
+ 243 |   /* Viewport culling in screen-space. */
+ 244 |   const visiblePointsForRender = useMemo(() => {
+ 245 |     const xScreenFn = (val) => xScale(val) * contentScale + contentOffset.x;
+ 246 |     const yScreenFn = (val) => yScale(val) * contentScale + contentOffset.y;
+ 247 |     return filterVisiblePoints(
+ 248 |       plotterPoints,
+ 249 |       xScreenFn,
+ 250 |       yScreenFn,
+ 251 |       innerWidth,
+ 252 |       innerHeight,
+ 253 |       adaptiveCellSizeBase * contentScale,
+ 254 |     );
+ 255 |     // eslint-disable-next-line react-hooks/exhaustive-deps
+ 256 |   }, [
+ 257 |     plotterPoints,
+ 258 |     xScale,
+ 259 |     yScale,
+ 260 |     contentScale,
+ 261 |     contentOffset.x,
+ 262 |     contentOffset.y,
+ 263 |     innerWidth,
+ 264 |     innerHeight,
+ 265 |     adaptiveCellSizeBase,
+ 266 |   ]);
  267 | 
- 268 |   const stageCursor = isDragging
- 269 |     ? "grabbing"
- 270 |     : contentScale > 1
- 271 |       ? "grab"
- 272 |       : "default";
- 273 | 
- 274 |   return (
- 275 |     <div style={{ position: "relative" }}>
- 276 |       <PlotterControls
- 277 |         onZoomIn={handleZoomIn}
- 278 |         onZoomOut={handleZoomOut}
- 279 |         onReset={handleReset}
- 280 |         zoomLevel={contentScale}
- 281 |       />
- 282 |       <Stage
- 283 |         ref={stageRef}
- 284 |         width={PLOT_DIMENSIONS.width}
- 285 |         height={PLOT_DIMENSIONS.height}
- 286 |         onWheel={handleWheel}
- 287 |         style={{ cursor: stageCursor }}
- 288 |       >
- 289 |         {/* Static axis layer — grid, labels, border (not affected by zoom/pan) */}
- 290 |         <Layer listening={false}>
- 291 |           <PlotBackground innerWidth={innerWidth} innerHeight={innerHeight} />
- 292 |           <AxisGrid
- 293 |             visibleDomain={visibleDomain}
- 294 |             innerWidth={innerWidth}
- 295 |             innerHeight={innerHeight}
- 296 |           />
- 297 |           <AxisLabels
- 298 |             visibleDomain={visibleDomain}
- 299 |             innerWidth={innerWidth}
- 300 |             innerHeight={innerHeight}
- 301 |           />
- 302 |           <AxisBorder innerWidth={innerWidth} innerHeight={innerHeight} />
- 303 |         </Layer>
- 304 | 
- 305 |         {/* Clipped content layer — images are clipped to the plot area */}
- 306 |         <Layer>
- 307 |           <ClippedContentGroup
- 308 |             innerWidth={innerWidth}
- 309 |             innerHeight={innerHeight}
- 310 |             contentOffset={contentOffset}
- 311 |             contentScale={contentScale}
- 312 |             draggableGroupRef={draggableGroupRef}
- 313 |             onDragStart={handleContentDragStart}
- 314 |             onDragMove={handleContentDragMove}
- 315 |             onDragEnd={handleContentDragEnd}
- 316 |           >
- 317 |             {plotterPoints.map((point) => (
- 318 |               <ImagePointGroup
- 319 |                 key={point.id}
- 320 |                 point={point}
- 321 |                 xScale={xScale}
- 322 |                 yScale={yScale}
- 323 |                 imageCount={imageCount}
- 324 |                 onHover={setHoveredPoint}
- 325 |                 onCursorMove={setCursorPosition}
- 326 |               />
- 327 |             ))}
- 328 |           </ClippedContentGroup>
- 329 |         </Layer>
- 330 |       </Stage>
+ 268 |   const effectiveImageCountForRender = computeEffectiveImageCount(
+ 269 |     adaptiveCellSizeForRender,
+ 270 |     imageCount,
+ 271 |   );
+ 272 | 
+ 273 |   /* ── Wheel zoom — mutates refs, schedules RAF flush ── */
+ 274 |   const handleWheel = useCallback(
+ 275 |     (event) => {
+ 276 |       event.evt.preventDefault();
+ 277 |       const stage = event.target.getStage();
+ 278 |       const pointerPosition = stage.getPointerPosition();
+ 279 | 
+ 280 |       if (!isPointerInsidePlotArea(pointerPosition, innerWidth, innerHeight))
+ 281 |         return;
+ 282 | 
+ 283 |       const nativeEvent = event.evt;
+ 284 |       const isPinchGesture = nativeEvent.ctrlKey;
+ 285 |       const scaleDelta = computeWheelScaleDelta(
+ 286 |         nativeEvent.deltaY,
+ 287 |         isPinchGesture,
+ 288 |       );
+ 289 |       const currentScale = scaleRef.current;
+ 290 |       const currentOffset = offsetRef.current;
+ 291 |       const isZoomOut = scaleDelta < 1;
+ 292 | 
+ 293 |       if (isZoomOut && currentScale <= MIN_ZOOM_SCALE) {
+ 294 |         return;
+ 295 |       }
+ 296 | 
+ 297 |       const newScale = clampScale(currentScale * scaleDelta);
+ 298 | 
+ 299 |       if (newScale === currentScale) {
+ 300 |         return;
+ 301 |       }
+ 302 | 
+ 303 |       logChartInteractionEvent({
+ 304 |         interactionType: scaleDelta > 1 ? "ZOOM_IN" : "ZOOM_OUT",
+ 305 |         visualizationLibrary: "Konva",
+ 306 |         interactionSource: "wheel",
+ 307 |       });
+ 308 | 
+ 309 |       const mouseRelX = pointerPosition.x - PLOT_MARGIN.left - currentOffset.x;
+ 310 |       const mouseRelY = pointerPosition.y - PLOT_MARGIN.top - currentOffset.y;
+ 311 | 
+ 312 |       const rawOffsetX =
+ 313 |         currentOffset.x - mouseRelX * (newScale / currentScale - 1);
+ 314 |       const rawOffsetY =
+ 315 |         currentOffset.y - mouseRelY * (newScale / currentScale - 1);
+ 316 |       const clampedOffset = clampContentOffset(
+ 317 |         rawOffsetX,
+ 318 |         rawOffsetY,
+ 319 |         newScale,
+ 320 |         innerWidth,
+ 321 |         innerHeight,
+ 322 |       );
+ 323 | 
+ 324 |       scaleRef.current = newScale;
+ 325 |       offsetRef.current = clampedOffset;
+ 326 |       persistViewport();
+ 327 |       scheduleUpdate();
+ 328 |     },
+ 329 |     [innerWidth, innerHeight, persistViewport, scheduleUpdate],
+ 330 |   );
  331 | 
- 332 |       {hoveredPoint && (
- 333 |         <PointTooltip
- 334 |           hoveredPoint={hoveredPoint}
- 335 |           cursorPosition={cursorPosition}
- 336 |         />
- 337 |       )}
- 338 |     </div>
- 339 |   );
- 340 | }
- 341 | 
- 342 | function ClippedContentGroup({
- 343 |   innerWidth,
- 344 |   innerHeight,
- 345 |   contentOffset,
- 346 |   contentScale,
- 347 |   draggableGroupRef,
- 348 |   onDragStart,
- 349 |   onDragMove,
- 350 |   onDragEnd,
- 351 |   children,
- 352 | }) {
- 353 |   const plotLeft = PLOT_MARGIN.left;
- 354 |   const plotTop = PLOT_MARGIN.top;
- 355 | 
- 356 |   const clipFunction = (ctx) => {
- 357 |     ctx.rect(plotLeft, plotTop, innerWidth, innerHeight);
- 358 |   };
- 359 | 
- 360 |   return (
- 361 |     <Group clipFunc={clipFunction}>
- 362 |       <Group
- 363 |         ref={draggableGroupRef}
- 364 |         x={plotLeft + contentOffset.x}
- 365 |         y={plotTop + contentOffset.y}
- 366 |         scaleX={contentScale}
- 367 |         scaleY={contentScale}
- 368 |         draggable
- 369 |         onDragStart={onDragStart}
- 370 |         onDragMove={onDragMove}
- 371 |         onDragEnd={onDragEnd}
- 372 |       >
- 373 |         {/* Invisible hit area so drag works from any empty space in the plot */}
- 374 |         <Rect
- 375 |           x={0}
- 376 |           y={0}
- 377 |           width={innerWidth}
- 378 |           height={innerHeight}
- 379 |           fill="transparent"
- 380 |           listening={true}
- 381 |         />
- 382 |         {children}
- 383 |       </Group>
- 384 |     </Group>
- 385 |   );
- 386 | }
- 387 | 
- 388 | function PointTooltip({ hoveredPoint, cursorPosition }) {
- 389 |   return (
- 390 |     <div
- 391 |       className="plotter-tooltip"
- 392 |       style={{
- 393 |         display: "block",
- 394 |         position: "absolute",
- 395 |         left: cursorPosition.x + 15,
- 396 |         top: cursorPosition.y - 10,
- 397 |         pointerEvents: "none",
- 398 |       }}
- 399 |     >
- 400 |       <div className="tooltip-label">{hoveredPoint.label}</div>
+ 332 |   /* ── Pan drag — mutates refs, schedules RAF flush ── */
+ 333 |   const handleStageMouseDown = useCallback(
+ 334 |     (event) => {
+ 335 |       const stage = event.target.getStage();
+ 336 |       const pointer = stage.getPointerPosition();
+ 337 |       if (!isPointerInsidePlotArea(pointer, innerWidth, innerHeight)) return;
+ 338 | 
+ 339 |       if (isPanMode) {
+ 340 |         if (scaleRef.current <= MIN_ZOOM_SCALE) return;
+ 341 |         logChartInteractionEvent({
+ 342 |           interactionType: "PAN",
+ 343 |           visualizationLibrary: "Konva",
+ 344 |           interactionSource: "drag",
+ 345 |         });
+ 346 |         setIsDragging(true);
+ 347 |         dragRef.current = {
+ 348 |           dragging: true,
+ 349 |           startX: pointer.x,
+ 350 |           startY: pointer.y,
+ 351 |           startOffset: { ...offsetRef.current },
+ 352 |         };
+ 353 |       } else if (isZoomMode) {
+ 354 |         const plotX = clampValue(pointer.x - PLOT_MARGIN.left, 0, innerWidth);
+ 355 |         const plotY = clampValue(pointer.y - PLOT_MARGIN.top, 0, innerHeight);
+ 356 |         brushStartRef.current = { x: plotX, y: plotY };
+ 357 |         setBrushRect({ x: plotX, y: plotY, width: 0, height: 0 });
+ 358 |       }
+ 359 |     },
+ 360 |     [isPanMode, isZoomMode, innerWidth, innerHeight],
+ 361 |   );
+ 362 | 
+ 363 |   const handleStageMouseMove = useCallback(
+ 364 |     (event) => {
+ 365 |       const stage = event.target.getStage();
+ 366 |       const pointer = stage.getPointerPosition();
+ 367 |       if (!pointer) return;
+ 368 | 
+ 369 |       if (dragRef.current.dragging) {
+ 370 |         if (scaleRef.current <= MIN_ZOOM_SCALE) return;
+ 371 |         const dx = pointer.x - dragRef.current.startX;
+ 372 |         const dy = pointer.y - dragRef.current.startY;
+ 373 |         const clamped = clampContentOffset(
+ 374 |           dragRef.current.startOffset.x + dx,
+ 375 |           dragRef.current.startOffset.y + dy,
+ 376 |           scaleRef.current,
+ 377 |           innerWidth,
+ 378 |           innerHeight,
+ 379 |         );
+ 380 |         offsetRef.current = clamped;
+ 381 |         persistViewport();
+ 382 |         scheduleUpdate();
+ 383 |         return;
+ 384 |       }
+ 385 | 
+ 386 |       if (brushStartRef.current) {
+ 387 |         const plotX = clampValue(pointer.x - PLOT_MARGIN.left, 0, innerWidth);
+ 388 |         const plotY = clampValue(pointer.y - PLOT_MARGIN.top, 0, innerHeight);
+ 389 |         const startPoint = brushStartRef.current;
+ 390 |         setBrushRect({
+ 391 |           x: Math.min(startPoint.x, plotX),
+ 392 |           y: Math.min(startPoint.y, plotY),
+ 393 |           width: Math.abs(plotX - startPoint.x),
+ 394 |           height: Math.abs(plotY - startPoint.y),
+ 395 |         });
+ 396 |       }
+ 397 |     },
+ 398 |     [innerWidth, innerHeight, persistViewport, scheduleUpdate],
+ 399 |   );
+ 400 | 
 ```
 
-### Chunk 3/4
+### Chunk 3/6
 
 ```jsx
- 401 |       <div className="tooltip-meta">
- 402 |         <span>Interval: {hoveredPoint.meta.interval}s</span>
- 403 |         <span>Angle: {hoveredPoint.meta.angle}°</span>
- 404 |         <span>Quality: {hoveredPoint.meta.quality}</span>
- 405 |       </div>
- 406 |     </div>
- 407 |   );
- 408 | }
- 409 | 
- 410 | function PlotBackground({ innerWidth, innerHeight }) {
- 411 |   return (
- 412 |     <Rect
- 413 |       x={PLOT_MARGIN.left}
- 414 |       y={PLOT_MARGIN.top}
- 415 |       width={innerWidth}
- 416 |       height={innerHeight}
- 417 |       fill="#16213e"
- 418 |     />
- 419 |   );
- 420 | }
- 421 | 
- 422 | function AxisBorder({ innerWidth, innerHeight }) {
- 423 |   return (
- 424 |     <Rect
- 425 |       x={PLOT_MARGIN.left}
- 426 |       y={PLOT_MARGIN.top}
- 427 |       width={innerWidth}
- 428 |       height={innerHeight}
- 429 |       stroke={AXIS_LINE_COLOR}
- 430 |       strokeWidth={1}
- 431 |       listening={false}
- 432 |     />
- 433 |   );
- 434 | }
- 435 | 
- 436 | function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
- 437 |   const xTicks = buildTicks(
- 438 |     visibleDomain.xMin,
- 439 |     visibleDomain.xMax,
- 440 |     AXIS_TICK_COUNT,
- 441 |   );
- 442 |   const yTicks = buildTicks(
- 443 |     visibleDomain.yMin,
- 444 |     visibleDomain.yMax,
- 445 |     AXIS_TICK_COUNT,
- 446 |   );
- 447 | 
- 448 |   const xScreenScale = buildLinearScale(
- 449 |     visibleDomain.xMin,
- 450 |     visibleDomain.xMax,
- 451 |     0,
- 452 |     innerWidth,
- 453 |   );
- 454 |   const yScreenScale = buildLinearScale(
- 455 |     visibleDomain.yMin,
- 456 |     visibleDomain.yMax,
- 457 |     innerHeight,
- 458 |     0,
- 459 |   );
- 460 | 
- 461 |   const gridLines = [];
- 462 | 
- 463 |   xTicks.forEach((value, index) => {
- 464 |     const xPos = PLOT_MARGIN.left + xScreenScale(value);
- 465 |     if (xPos < PLOT_MARGIN.left || xPos > PLOT_MARGIN.left + innerWidth) return;
- 466 |     gridLines.push(
- 467 |       <Line
- 468 |         key={`xgrid-${index}`}
- 469 |         points={[xPos, PLOT_MARGIN.top, xPos, PLOT_MARGIN.top + innerHeight]}
- 470 |         stroke={GRID_COLOR}
- 471 |         strokeWidth={1}
- 472 |         dash={[4, 4]}
- 473 |         listening={false}
- 474 |       />,
- 475 |     );
- 476 |   });
- 477 | 
- 478 |   yTicks.forEach((value, index) => {
- 479 |     const yPos = PLOT_MARGIN.top + yScreenScale(value);
- 480 |     if (yPos < PLOT_MARGIN.top || yPos > PLOT_MARGIN.top + innerHeight) return;
- 481 |     gridLines.push(
- 482 |       <Line
- 483 |         key={`ygrid-${index}`}
- 484 |         points={[PLOT_MARGIN.left, yPos, PLOT_MARGIN.left + innerWidth, yPos]}
- 485 |         stroke={GRID_COLOR}
- 486 |         strokeWidth={1}
- 487 |         dash={[4, 4]}
- 488 |         listening={false}
- 489 |       />,
- 490 |     );
- 491 |   });
- 492 | 
- 493 |   return <>{gridLines}</>;
- 494 | }
- 495 | 
- 496 | function AxisLabels({ visibleDomain, innerWidth, innerHeight }) {
- 497 |   const xTicks = buildTicks(
- 498 |     visibleDomain.xMin,
- 499 |     visibleDomain.xMax,
- 500 |     AXIS_TICK_COUNT,
- 501 |   );
- 502 |   const yTicks = buildTicks(
- 503 |     visibleDomain.yMin,
- 504 |     visibleDomain.yMax,
- 505 |     AXIS_TICK_COUNT,
- 506 |   );
- 507 | 
- 508 |   const xScreenScale = buildLinearScale(
- 509 |     visibleDomain.xMin,
- 510 |     visibleDomain.xMax,
- 511 |     0,
- 512 |     innerWidth,
- 513 |   );
- 514 |   const yScreenScale = buildLinearScale(
- 515 |     visibleDomain.yMin,
- 516 |     visibleDomain.yMax,
- 517 |     innerHeight,
- 518 |     0,
- 519 |   );
- 520 | 
- 521 |   const tickLabels = [];
- 522 | 
- 523 |   xTicks.forEach((value, index) => {
- 524 |     const xPos = PLOT_MARGIN.left + xScreenScale(value);
- 525 |     if (xPos < PLOT_MARGIN.left - 5 || xPos > PLOT_MARGIN.left + innerWidth + 5)
- 526 |       return;
- 527 |     tickLabels.push(
- 528 |       <Text
- 529 |         key={`xlabel-${index}`}
- 530 |         text={formatTickLabel(value)}
- 531 |         x={xPos - 14}
- 532 |         y={PLOT_MARGIN.top + innerHeight + 6}
- 533 |         fill={TICK_LABEL_COLOR}
- 534 |         fontSize={TICK_LABEL_FONT_SIZE}
- 535 |         listening={false}
- 536 |       />,
- 537 |     );
- 538 |   });
- 539 | 
- 540 |   yTicks.forEach((value, index) => {
- 541 |     const yPos = PLOT_MARGIN.top + yScreenScale(value);
- 542 |     if (yPos < PLOT_MARGIN.top - 5 || yPos > PLOT_MARGIN.top + innerHeight + 5)
- 543 |       return;
- 544 |     tickLabels.push(
- 545 |       <Text
- 546 |         key={`ylabel-${index}`}
- 547 |         text={formatTickLabel(value)}
- 548 |         x={PLOT_MARGIN.left - 36}
- 549 |         y={yPos - 6}
- 550 |         fill={TICK_LABEL_COLOR}
- 551 |         fontSize={TICK_LABEL_FONT_SIZE}
- 552 |         width={32}
- 553 |         align="right"
- 554 |         listening={false}
- 555 |       />,
- 556 |     );
- 557 |   });
- 558 | 
- 559 |   return <>{tickLabels}</>;
- 560 | }
- 561 | 
- 562 | function ImagePointGroup({
- 563 |   point,
- 564 |   xScale,
- 565 |   yScale,
- 566 |   imageCount,
- 567 |   onHover,
- 568 |   onCursorMove,
- 569 | }) {
- 570 |   const centerX = xScale(point.x);
- 571 |   const centerY = yScale(point.y);
- 572 |   const positions = computeImagePositions(
- 573 |     centerX,
- 574 |     centerY,
- 575 |     CELL_SIZE,
- 576 |     CELL_SIZE,
- 577 |     imageCount,
- 578 |   );
- 579 | 
- 580 |   return (
- 581 |     <>
- 582 |       {positions.map((position, index) => (
- 583 |         <KonvaImageFromUrl
- 584 |           key={`${point.id}-${index}`}
- 585 |           imageUrl={point.image}
- 586 |           x={position.x}
- 587 |           y={position.y}
- 588 |           width={position.width}
- 589 |           height={position.height}
- 590 |           point={point}
- 591 |           onHover={onHover}
- 592 |           onCursorMove={onCursorMove}
- 593 |         />
- 594 |       ))}
- 595 |     </>
- 596 |   );
- 597 | }
- 598 | 
- 599 | function KonvaImageFromUrl({
- 600 |   imageUrl,
+ 401 |   const handleStageMouseUp = useCallback(
+ 402 |     (localBrushRect) => {
+ 403 |       if (dragRef.current.dragging) {
+ 404 |         setIsDragging(false);
+ 405 |         dragRef.current.dragging = false;
+ 406 |         return;
+ 407 |       }
+ 408 | 
+ 409 |       if (brushStartRef.current && localBrushRect) {
+ 410 |         const isTooSmall =
+ 411 |           localBrushRect.width < BRUSH_MIN_PIXELS ||
+ 412 |           localBrushRect.height < BRUSH_MIN_PIXELS;
+ 413 | 
+ 414 |         if (!isTooSmall) {
+ 415 |           logChartInteractionEvent({
+ 416 |             interactionType: "ZOOM_IN",
+ 417 |             visualizationLibrary: "Konva",
+ 418 |             interactionSource: "brush",
+ 419 |           });
+ 420 |           const zoomResult = convertBrushToZoom(
+ 421 |             localBrushRect,
+ 422 |             offsetRef.current,
+ 423 |             scaleRef.current,
+ 424 |             innerWidth,
+ 425 |             innerHeight,
+ 426 |           );
+ 427 |           scaleRef.current = zoomResult.scale;
+ 428 |           offsetRef.current = zoomResult.offset;
+ 429 |           persistViewport();
+ 430 |           scheduleUpdate();
+ 431 |         }
+ 432 |       }
+ 433 | 
+ 434 |       brushStartRef.current = null;
+ 435 |       setBrushRect(null);
+ 436 |     },
+ 437 |     [innerWidth, innerHeight, persistViewport, scheduleUpdate],
+ 438 |   );
+ 439 | 
+ 440 |   /* ── Button controls — mutate refs + scheduleUpdate ── */
+ 441 |   const handleZoomIn = useCallback(() => {
+ 442 |     logChartInteractionEvent({
+ 443 |       interactionType: "ZOOM_IN",
+ 444 |       visualizationLibrary: "Konva",
+ 445 |       interactionSource: "button",
+ 446 |     });
+ 447 |     const currentScale = scaleRef.current;
+ 448 |     const currentOffset = offsetRef.current;
+ 449 |     const centerX = innerWidth / 2;
+ 450 |     const centerY = innerHeight / 2;
+ 451 |     const newScale = clampScale(currentScale * ZOOM_STEP);
+ 452 |     const rawOffsetX =
+ 453 |       currentOffset.x - centerX * (newScale / currentScale - 1);
+ 454 |     const rawOffsetY =
+ 455 |       currentOffset.y - centerY * (newScale / currentScale - 1);
+ 456 |     scaleRef.current = newScale;
+ 457 |     offsetRef.current = clampContentOffset(
+ 458 |       rawOffsetX,
+ 459 |       rawOffsetY,
+ 460 |       newScale,
+ 461 |       innerWidth,
+ 462 |       innerHeight,
+ 463 |     );
+ 464 |     persistViewport();
+ 465 |     scheduleUpdate();
+ 466 |   }, [innerWidth, innerHeight, persistViewport, scheduleUpdate]);
+ 467 | 
+ 468 |   const handleZoomOut = useCallback(() => {
+ 469 |     const currentScale = scaleRef.current;
+ 470 | 
+ 471 |     if (currentScale <= MIN_ZOOM_SCALE) {
+ 472 |       return;
+ 473 |     }
+ 474 | 
+ 475 |     logChartInteractionEvent({
+ 476 |       interactionType: "ZOOM_OUT",
+ 477 |       visualizationLibrary: "Konva",
+ 478 |       interactionSource: "button",
+ 479 |     });
+ 480 | 
+ 481 |     const currentOffset = offsetRef.current;
+ 482 | 
+ 483 |     const centerX = innerWidth / 2;
+ 484 |     const centerY = innerHeight / 2;
+ 485 |     const newScale = clampScale(currentScale / ZOOM_STEP);
+ 486 |     const rawOffsetX =
+ 487 |       currentOffset.x - centerX * (newScale / currentScale - 1);
+ 488 |     const rawOffsetY =
+ 489 |       currentOffset.y - centerY * (newScale / currentScale - 1);
+ 490 |     scaleRef.current = newScale;
+ 491 |     offsetRef.current = clampContentOffset(
+ 492 |       rawOffsetX,
+ 493 |       rawOffsetY,
+ 494 |       newScale,
+ 495 |       innerWidth,
+ 496 |       innerHeight,
+ 497 |     );
+ 498 |     persistViewport();
+ 499 |     scheduleUpdate();
+ 500 |   }, [innerWidth, innerHeight, persistViewport, scheduleUpdate]);
+ 501 | 
+ 502 |   const handleReset = useCallback(() => {
+ 503 |     logChartInteractionEvent({
+ 504 |       interactionType: "RESET",
+ 505 |       visualizationLibrary: "Konva",
+ 506 |       interactionSource: "button",
+ 507 |     });
+ 508 |     scaleRef.current = 1;
+ 509 |     offsetRef.current = { x: 0, y: 0 };
+ 510 |     persistViewport();
+ 511 |     scheduleUpdate();
+ 512 |   }, [persistViewport, scheduleUpdate]);
+ 513 | 
+ 514 |   const handleDoubleClick = useCallback(() => {
+ 515 |     logChartInteractionEvent({
+ 516 |       interactionType: "RESET",
+ 517 |       visualizationLibrary: "Konva",
+ 518 |       interactionSource: "double_click",
+ 519 |     });
+ 520 |     scaleRef.current = 1;
+ 521 |     offsetRef.current = { x: 0, y: 0 };
+ 522 |     persistViewport();
+ 523 |     scheduleUpdate();
+ 524 |   }, [persistViewport, scheduleUpdate]);
+ 525 | 
+ 526 |   const stageCursor = isPanMode
+ 527 |     ? isDragging
+ 528 |       ? "grabbing"
+ 529 |       : "grab"
+ 530 |     : "crosshair";
+ 531 | 
+ 532 |   return (
+ 533 |     <div style={{ position: "relative" }}>
+ 534 |       <PlotterControls
+ 535 |         onZoomIn={handleZoomIn}
+ 536 |         onZoomOut={handleZoomOut}
+ 537 |         onReset={handleReset}
+ 538 |         zoomLevel={contentScale}
+ 539 |         interactionMode={interactionMode}
+ 540 |         onModeChange={setInteractionMode}
+ 541 |       />
+ 542 |       <Stage
+ 543 |         ref={stageRef}
+ 544 |         width={PLOT_DIMENSIONS.width}
+ 545 |         height={PLOT_DIMENSIONS.height}
+ 546 |         onWheel={handleWheel}
+ 547 |         onDblClick={handleDoubleClick}
+ 548 |         onDblTap={handleDoubleClick}
+ 549 |         onMouseDown={handleStageMouseDown}
+ 550 |         onMouseMove={handleStageMouseMove}
+ 551 |         onMouseUp={() => handleStageMouseUp(brushRect)}
+ 552 |         onMouseLeave={() => handleStageMouseUp(brushRect)}
+ 553 |         style={{ cursor: stageCursor }}
+ 554 |       >
+ 555 |         {/* Static axis layer — grid and labels derived from current visible domain */}
+ 556 |         <Layer listening={false}>
+ 557 |           <PlotBackground innerWidth={innerWidth} innerHeight={innerHeight} />
+ 558 |           <AxisGrid
+ 559 |             visibleDomain={visibleDomain}
+ 560 |             innerWidth={innerWidth}
+ 561 |             innerHeight={innerHeight}
+ 562 |           />
+ 563 |           <AxisLabels
+ 564 |             visibleDomain={visibleDomain}
+ 565 |             innerWidth={innerWidth}
+ 566 |             innerHeight={innerHeight}
+ 567 |           />
+ 568 |           <AxisBorder innerWidth={innerWidth} innerHeight={innerHeight} />
+ 569 |         </Layer>
+ 570 | 
+ 571 |         {/* Clipped content layer — images positioned from domain-derived scales */}
+ 572 |         <Layer>
+ 573 |           <ClippedContentGroup
+ 574 |             innerWidth={innerWidth}
+ 575 |             innerHeight={innerHeight}
+ 576 |           >
+ 577 |             {visiblePointsForRender.map((point) => (
+ 578 |               <ImagePointGroup
+ 579 |                 key={point.id}
+ 580 |                 point={point}
+ 581 |                 xScale={dynamicXScale}
+ 582 |                 yScale={dynamicYScale}
+ 583 |                 imageCount={effectiveImageCountForRender}
+ 584 |                 cellSize={adaptiveCellSizeForRender}
+ 585 |                 onHover={setHoveredPoint}
+ 586 |                 onCursorMove={setCursorPosition}
+ 587 |               />
+ 588 |             ))}
+ 589 |           </ClippedContentGroup>
+ 590 |         </Layer>
+ 591 | 
+ 592 |         {/* Brush overlay layer — only rendered in zoom mode */}
+ 593 |         {isZoomMode && (
+ 594 |           <Layer listening={false}>
+ 595 |             <BrushSelectionOverlay brushRect={brushRect} />
+ 596 |           </Layer>
+ 597 |         )}
+ 598 |       </Stage>
+ 599 | 
+ 600 |       {hoveredPoint && (
 ```
 
-### Chunk 4/4
+### Chunk 4/6
 
 ```jsx
- 601 |   x,
- 602 |   y,
- 603 |   width,
- 604 |   height,
- 605 |   point,
- 606 |   onHover,
- 607 |   onCursorMove,
- 608 | }) {
- 609 |   const [loadedImage, setLoadedImage] = useState(null);
- 610 | 
- 611 |   useEffect(() => {
- 612 |     const htmlImage = new window.Image();
- 613 |     htmlImage.crossOrigin = "anonymous";
- 614 |     htmlImage.src = imageUrl;
- 615 |     htmlImage.onload = () => setLoadedImage(htmlImage);
- 616 |     return () => {
- 617 |       htmlImage.onload = null;
- 618 |     };
- 619 |   }, [imageUrl]);
- 620 | 
- 621 |   const handleMouseEnter = useCallback(
- 622 |     (event) => {
- 623 |       const stage = event.target.getStage();
- 624 |       const pointer = stage.getPointerPosition();
- 625 |       onCursorMove({ x: pointer.x, y: pointer.y });
- 626 |       onHover(point);
- 627 |     },
- 628 |     [point, onHover, onCursorMove],
- 629 |   );
- 630 | 
- 631 |   const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
- 632 | 
- 633 |   if (!loadedImage) return null;
- 634 | 
- 635 |   return (
- 636 |     <KonvaImage
- 637 |       image={loadedImage}
- 638 |       x={x}
- 639 |       y={y}
- 640 |       width={width}
- 641 |       height={height}
- 642 |       onMouseEnter={handleMouseEnter}
- 643 |       onMouseLeave={handleMouseLeave}
- 644 |     />
- 645 |   );
- 646 | }
- 647 | 
- 648 | /* ─── Pure utility functions ──────────────────────────────────────────── */
- 649 | 
- 650 | function isPointerInsidePlotArea(
- 651 |   pointerPosition,
- 652 |   plotInnerWidth,
- 653 |   plotInnerHeight,
- 654 | ) {
- 655 |   return (
- 656 |     pointerPosition.x > PLOT_MARGIN.left &&
- 657 |     pointerPosition.x < PLOT_MARGIN.left + plotInnerWidth &&
- 658 |     pointerPosition.y > PLOT_MARGIN.top &&
- 659 |     pointerPosition.y < PLOT_MARGIN.top + plotInnerHeight
- 660 |   );
- 661 | }
- 662 | 
- 663 | function clampScale(rawScale) {
- 664 |   return Math.max(ZOOM_MIN, Math.min(rawScale, ZOOM_MAX));
- 665 | }
- 666 | 
- 667 | function computeWheelScaleDelta(deltaY, isPinchGesture) {
- 668 |   if (isPinchGesture) {
- 669 |     return Math.exp(-deltaY * PINCH_ZOOM_SENSITIVITY);
- 670 |   }
- 671 |   return deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
- 672 | }
- 673 | 
- 674 | function clampContentOffset(
- 675 |   rawX,
- 676 |   rawY,
- 677 |   scale,
- 678 |   plotInnerWidth,
- 679 |   plotInnerHeight,
- 680 | ) {
- 681 |   const scaledWidth = plotInnerWidth * scale;
- 682 |   const scaledHeight = plotInnerHeight * scale;
- 683 | 
- 684 |   let clampedX = rawX;
- 685 |   let clampedY = rawY;
- 686 | 
- 687 |   if (scaledWidth <= plotInnerWidth) {
- 688 |     clampedX = (plotInnerWidth - scaledWidth) / 2;
- 689 |   } else {
- 690 |     const minX = plotInnerWidth - scaledWidth;
- 691 |     const maxX = 0;
- 692 |     clampedX = Math.max(minX, Math.min(rawX, maxX));
- 693 |   }
+ 601 |         <PointTooltip
+ 602 |           hoveredPoint={hoveredPoint}
+ 603 |           cursorPosition={cursorPosition}
+ 604 |         />
+ 605 |       )}
+ 606 |     </div>
+ 607 |   );
+ 608 | }
+ 609 | 
+ 610 | function BrushSelectionOverlay({ brushRect }) {
+ 611 |   return (
+ 612 |     <Group listening={false}>
+ 613 |       {/* Semi-transparent selection rectangle */}
+ 614 |       {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
+ 615 |         <Rect
+ 616 |           x={PLOT_MARGIN.left + brushRect.x}
+ 617 |           y={PLOT_MARGIN.top + brushRect.y}
+ 618 |           width={brushRect.width}
+ 619 |           height={brushRect.height}
+ 620 |           fill={BRUSH_FILL}
+ 621 |           stroke={BRUSH_STROKE}
+ 622 |           strokeWidth={BRUSH_STROKE_WIDTH}
+ 623 |           listening={false}
+ 624 |         />
+ 625 |       )}
+ 626 |     </Group>
+ 627 |   );
+ 628 | }
+ 629 | 
+ 630 | function ClippedContentGroup({ innerWidth, innerHeight, children }) {
+ 631 |   const plotLeft = PLOT_MARGIN.left;
+ 632 |   const plotTop = PLOT_MARGIN.top;
+ 633 | 
+ 634 |   const clipFunction = (ctx) => {
+ 635 |     ctx.rect(plotLeft, plotTop, innerWidth, innerHeight);
+ 636 |   };
+ 637 | 
+ 638 |   return (
+ 639 |     <Group clipFunc={clipFunction}>
+ 640 |       <Group x={plotLeft} y={plotTop} scaleX={1} scaleY={1}>
+ 641 |         {children}
+ 642 |       </Group>
+ 643 |     </Group>
+ 644 |   );
+ 645 | }
+ 646 | 
+ 647 | function PointTooltip({ hoveredPoint, cursorPosition }) {
+ 648 |   return (
+ 649 |     <div
+ 650 |       className="plotter-tooltip"
+ 651 |       style={{
+ 652 |         display: "block",
+ 653 |         position: "absolute",
+ 654 |         left: cursorPosition.x + 15,
+ 655 |         top: cursorPosition.y - 10,
+ 656 |         pointerEvents: "none",
+ 657 |       }}
+ 658 |     >
+ 659 |       <div className="tooltip-label">{hoveredPoint.label}</div>
+ 660 |       <div className="tooltip-meta">
+ 661 |         <span>Interval: {hoveredPoint.meta.interval}s</span>
+ 662 |         <span>Angle: {hoveredPoint.meta.angle}°</span>
+ 663 |         <span>Quality: {hoveredPoint.meta.quality}</span>
+ 664 |       </div>
+ 665 |     </div>
+ 666 |   );
+ 667 | }
+ 668 | 
+ 669 | function PlotBackground({ innerWidth, innerHeight }) {
+ 670 |   return (
+ 671 |     <Rect
+ 672 |       x={PLOT_MARGIN.left}
+ 673 |       y={PLOT_MARGIN.top}
+ 674 |       width={innerWidth}
+ 675 |       height={innerHeight}
+ 676 |       fill="#16213e"
+ 677 |     />
+ 678 |   );
+ 679 | }
+ 680 | 
+ 681 | function AxisBorder({ innerWidth, innerHeight }) {
+ 682 |   return (
+ 683 |     <Rect
+ 684 |       x={PLOT_MARGIN.left}
+ 685 |       y={PLOT_MARGIN.top}
+ 686 |       width={innerWidth}
+ 687 |       height={innerHeight}
+ 688 |       stroke={AXIS_LINE_COLOR}
+ 689 |       strokeWidth={1}
+ 690 |       listening={false}
+ 691 |     />
+ 692 |   );
+ 693 | }
  694 | 
- 695 |   if (scaledHeight <= plotInnerHeight) {
- 696 |     clampedY = (plotInnerHeight - scaledHeight) / 2;
- 697 |   } else {
- 698 |     const minY = plotInnerHeight - scaledHeight;
- 699 |     const maxY = 0;
- 700 |     clampedY = Math.max(minY, Math.min(rawY, maxY));
- 701 |   }
- 702 | 
- 703 |   return { x: clampedX, y: clampedY };
- 704 | }
- 705 | 
- 706 | function buildScales(plotterPoints, plotInnerWidth, plotInnerHeight) {
- 707 |   const xValues = plotterPoints.map((p) => p.x);
- 708 |   const yValues = plotterPoints.map((p) => p.y);
- 709 | 
- 710 |   const xMin = Math.min(...xValues);
- 711 |   const xMax = Math.max(...xValues);
- 712 |   const yMin = Math.min(...yValues);
- 713 |   const yMax = Math.max(...yValues);
- 714 | 
- 715 |   const xPadding =
- 716 |     (xMax - xMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
- 717 |   const yPadding =
- 718 |     (yMax - yMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
+ 695 | function AxisGrid({ visibleDomain, innerWidth, innerHeight }) {
+ 696 |   const xTicks = buildTicks(
+ 697 |     visibleDomain.xMin,
+ 698 |     visibleDomain.xMax,
+ 699 |     AXIS_TICK_COUNT,
+ 700 |   );
+ 701 |   const yTicks = buildTicks(
+ 702 |     visibleDomain.yMin,
+ 703 |     visibleDomain.yMax,
+ 704 |     AXIS_TICK_COUNT,
+ 705 |   );
+ 706 | 
+ 707 |   const xScreenScale = buildLinearScale(
+ 708 |     visibleDomain.xMin,
+ 709 |     visibleDomain.xMax,
+ 710 |     0,
+ 711 |     innerWidth,
+ 712 |   );
+ 713 |   const yScreenScale = buildLinearScale(
+ 714 |     visibleDomain.yMin,
+ 715 |     visibleDomain.yMax,
+ 716 |     innerHeight,
+ 717 |     0,
+ 718 |   );
  719 | 
- 720 |   const xExtent = [xMin - xPadding, xMax + xPadding];
- 721 |   const yExtent = [yMin - yPadding, yMax + yPadding];
- 722 | 
- 723 |   const xScale = buildLinearScale(xExtent[0], xExtent[1], 0, plotInnerWidth);
- 724 |   const yScale = buildLinearScale(yExtent[0], yExtent[1], plotInnerHeight, 0);
- 725 | 
- 726 |   return { xScale, yScale, xExtent, yExtent };
- 727 | }
- 728 | 
- 729 | function computeVisibleDomain(
- 730 |   xExtent,
- 731 |   yExtent,
- 732 |   contentOffset,
- 733 |   scale,
- 734 |   plotInnerWidth,
- 735 |   plotInnerHeight,
- 736 | ) {
- 737 |   const domainWidth = xExtent[1] - xExtent[0];
- 738 |   const domainHeight = yExtent[1] - yExtent[0];
- 739 | 
- 740 |   const xMin =
- 741 |     xExtent[0] - (contentOffset.x / scale / plotInnerWidth) * domainWidth;
- 742 |   const xMax = xMin + domainWidth / scale;
- 743 | 
- 744 |   const yMax =
- 745 |     yExtent[1] + (contentOffset.y / scale / plotInnerHeight) * domainHeight;
- 746 |   const yMin = yMax - domainHeight / scale;
- 747 | 
- 748 |   return { xMin, xMax, yMin, yMax };
- 749 | }
- 750 | 
- 751 | function buildLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
- 752 |   return (value) => {
- 753 |     const ratio = (value - domainMin) / (domainMax - domainMin);
- 754 |     return rangeMin + ratio * (rangeMax - rangeMin);
- 755 |   };
- 756 | }
- 757 | 
- 758 | function buildTicks(min, max, count) {
- 759 |   const rawStep = (max - min) / count;
- 760 |   const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
- 761 |   const niceSteps = [1, 2, 2.5, 5, 10];
- 762 |   const step =
- 763 |     niceSteps.map((s) => s * magnitude).find((s) => s >= rawStep) ?? rawStep;
- 764 | 
- 765 |   const start = Math.ceil(min / step) * step;
- 766 |   const ticks = [];
- 767 | 
- 768 |   for (let tick = start; tick <= max + step * 0.001; tick += step) {
- 769 |     ticks.push(parseFloat(tick.toPrecision(10)));
- 770 |   }
- 771 | 
- 772 |   return ticks;
- 773 | }
- 774 | 
- 775 | function formatTickLabel(value) {
- 776 |   if (Math.abs(value) >= 1000) return value.toExponential(1);
- 777 |   const formattedString = value.toPrecision(4);
- 778 |   return parseFloat(formattedString).toString();
- 779 | }
- 780 | 
- 781 | export default KonvaPlotter;
- 782 | 
+ 720 |   const gridLines = [];
+ 721 | 
+ 722 |   xTicks.forEach((value, index) => {
+ 723 |     const xPos = PLOT_MARGIN.left + xScreenScale(value);
+ 724 |     if (xPos < PLOT_MARGIN.left || xPos > PLOT_MARGIN.left + innerWidth) return;
+ 725 |     gridLines.push(
+ 726 |       <Line
+ 727 |         key={`xgrid-${index}`}
+ 728 |         points={[xPos, PLOT_MARGIN.top, xPos, PLOT_MARGIN.top + innerHeight]}
+ 729 |         stroke={GRID_COLOR}
+ 730 |         strokeWidth={1}
+ 731 |         dash={[4, 4]}
+ 732 |         listening={false}
+ 733 |       />,
+ 734 |     );
+ 735 |   });
+ 736 | 
+ 737 |   yTicks.forEach((value, index) => {
+ 738 |     const yPos = PLOT_MARGIN.top + yScreenScale(value);
+ 739 |     if (yPos < PLOT_MARGIN.top || yPos > PLOT_MARGIN.top + innerHeight) return;
+ 740 |     gridLines.push(
+ 741 |       <Line
+ 742 |         key={`ygrid-${index}`}
+ 743 |         points={[PLOT_MARGIN.left, yPos, PLOT_MARGIN.left + innerWidth, yPos]}
+ 744 |         stroke={GRID_COLOR}
+ 745 |         strokeWidth={1}
+ 746 |         dash={[4, 4]}
+ 747 |         listening={false}
+ 748 |       />,
+ 749 |     );
+ 750 |   });
+ 751 | 
+ 752 |   return <>{gridLines}</>;
+ 753 | }
+ 754 | 
+ 755 | function AxisLabels({ visibleDomain, innerWidth, innerHeight }) {
+ 756 |   const xTicks = buildTicks(
+ 757 |     visibleDomain.xMin,
+ 758 |     visibleDomain.xMax,
+ 759 |     AXIS_TICK_COUNT,
+ 760 |   );
+ 761 |   const yTicks = buildTicks(
+ 762 |     visibleDomain.yMin,
+ 763 |     visibleDomain.yMax,
+ 764 |     AXIS_TICK_COUNT,
+ 765 |   );
+ 766 | 
+ 767 |   const xScreenScale = buildLinearScale(
+ 768 |     visibleDomain.xMin,
+ 769 |     visibleDomain.xMax,
+ 770 |     0,
+ 771 |     innerWidth,
+ 772 |   );
+ 773 |   const yScreenScale = buildLinearScale(
+ 774 |     visibleDomain.yMin,
+ 775 |     visibleDomain.yMax,
+ 776 |     innerHeight,
+ 777 |     0,
+ 778 |   );
+ 779 | 
+ 780 |   const tickLabels = [];
+ 781 | 
+ 782 |   xTicks.forEach((value, index) => {
+ 783 |     const xPos = PLOT_MARGIN.left + xScreenScale(value);
+ 784 |     if (xPos < PLOT_MARGIN.left - 5 || xPos > PLOT_MARGIN.left + innerWidth + 5)
+ 785 |       return;
+ 786 |     tickLabels.push(
+ 787 |       <Text
+ 788 |         key={`xlabel-${index}`}
+ 789 |         text={formatTickLabel(value)}
+ 790 |         x={xPos - 14}
+ 791 |         y={PLOT_MARGIN.top + innerHeight + 6}
+ 792 |         fill={TICK_LABEL_COLOR}
+ 793 |         fontSize={TICK_LABEL_FONT_SIZE}
+ 794 |         listening={false}
+ 795 |       />,
+ 796 |     );
+ 797 |   });
+ 798 | 
+ 799 |   yTicks.forEach((value, index) => {
+ 800 |     const yPos = PLOT_MARGIN.top + yScreenScale(value);
+```
+
+### Chunk 5/6
+
+```jsx
+ 801 |     if (yPos < PLOT_MARGIN.top - 5 || yPos > PLOT_MARGIN.top + innerHeight + 5)
+ 802 |       return;
+ 803 |     tickLabels.push(
+ 804 |       <Text
+ 805 |         key={`ylabel-${index}`}
+ 806 |         text={formatTickLabel(value)}
+ 807 |         x={PLOT_MARGIN.left - 36}
+ 808 |         y={yPos - 6}
+ 809 |         fill={TICK_LABEL_COLOR}
+ 810 |         fontSize={TICK_LABEL_FONT_SIZE}
+ 811 |         width={32}
+ 812 |         align="right"
+ 813 |         listening={false}
+ 814 |       />,
+ 815 |     );
+ 816 |   });
+ 817 | 
+ 818 |   return <>{tickLabels}</>;
+ 819 | }
+ 820 | 
+ 821 | function ImagePointGroup({
+ 822 |   point,
+ 823 |   xScale,
+ 824 |   yScale,
+ 825 |   imageCount,
+ 826 |   cellSize,
+ 827 |   onHover,
+ 828 |   onCursorMove,
+ 829 | }) {
+ 830 |   const [imgObj, setImgObj] = useState(null);
+ 831 | 
+ 832 |   useEffect(() => {
+ 833 |     let isMounted = true;
+ 834 |     const img = new Image();
+ 835 | 
+ 836 |     img.onload = () => {
+ 837 |       if (isMounted) {
+ 838 |         setImgObj(img);
+ 839 |       }
+ 840 |     };
+ 841 | 
+ 842 |     img.onerror = () => {
+ 843 |       if (isMounted) {
+ 844 |         setImgObj(null);
+ 845 |       }
+ 846 |     };
+ 847 | 
+ 848 |     img.src = point.image;
+ 849 | 
+ 850 |     return () => {
+ 851 |       isMounted = false;
+ 852 | 
+ 853 |       img.onload = null;
+ 854 |       img.onerror = null;
+ 855 |       img.src = "";
+ 856 | 
+ 857 |       setImgObj(null);
+ 858 |     };
+ 859 |   }, [point.image]);
+ 860 | 
+ 861 |   const centerX = xScale(point.x);
+ 862 |   const centerY = yScale(point.y);
+ 863 |   const resolvedCellSize = cellSize ?? CELL_SIZE;
+ 864 |   const positions = computeImagePositions(
+ 865 |     centerX,
+ 866 |     centerY,
+ 867 |     resolvedCellSize,
+ 868 |     resolvedCellSize,
+ 869 |     imageCount,
+ 870 |   );
+ 871 | 
+ 872 |   if (!imgObj) return null;
+ 873 | 
+ 874 |   return (
+ 875 |     <>
+ 876 |       {positions.map((position, index) => (
+ 877 |         <KonvaImage
+ 878 |           key={`${point.id}-${index}`}
+ 879 |           image={imgObj}
+ 880 |           x={position.x}
+ 881 |           y={position.y}
+ 882 |           width={position.width}
+ 883 |           height={position.height}
+ 884 |           point={point}
+ 885 |           onMouseEnter={(event) => {
+ 886 |             const stage = event.target.getStage();
+ 887 |             const pointerPosition = stage.getPointerPosition();
+ 888 |             onHover(point);
+ 889 |             onCursorMove({ x: pointerPosition.x, y: pointerPosition.y });
+ 890 |           }}
+ 891 |           onMouseLeave={() => onHover(null)}
+ 892 |         />
+ 893 |       ))}
+ 894 |     </>
+ 895 |   );
+ 896 | }
+ 897 | 
+ 898 | function convertBrushToZoom(
+ 899 |   brushPixelRect,
+ 900 |   currentOffset,
+ 901 |   currentScale,
+ 902 |   plotInnerWidth,
+ 903 |   plotInnerHeight,
+ 904 | ) {
+ 905 |   const contentX0 = (brushPixelRect.x - currentOffset.x) / currentScale;
+ 906 |   const contentY0 = (brushPixelRect.y - currentOffset.y) / currentScale;
+ 907 |   const contentBrushWidth = brushPixelRect.width / currentScale;
+ 908 |   const contentBrushHeight = brushPixelRect.height / currentScale;
+ 909 | 
+ 910 |   const fitScaleX = plotInnerWidth / contentBrushWidth;
+ 911 |   const fitScaleY = plotInnerHeight / contentBrushHeight;
+ 912 |   const newScale = clampScale(Math.min(fitScaleX, fitScaleY));
+ 913 | 
+ 914 |   const rawOffsetX = -contentX0 * newScale;
+ 915 |   const rawOffsetY = -contentY0 * newScale;
+ 916 | 
+ 917 |   const clampedOffset = clampContentOffset(
+ 918 |     rawOffsetX,
+ 919 |     rawOffsetY,
+ 920 |     newScale,
+ 921 |     plotInnerWidth,
+ 922 |     plotInnerHeight,
+ 923 |   );
+ 924 | 
+ 925 |   return { scale: newScale, offset: clampedOffset };
+ 926 | }
+ 927 | 
+ 928 | function clampValue(value, min, max) {
+ 929 |   return Math.max(min, Math.min(value, max));
+ 930 | }
+ 931 | 
+ 932 | /* ─── Pure utility functions ──────────────────────────────────────────── */
+ 933 | 
+ 934 | function isPointerInsidePlotArea(
+ 935 |   pointerPosition,
+ 936 |   plotInnerWidth,
+ 937 |   plotInnerHeight,
+ 938 | ) {
+ 939 |   return (
+ 940 |     pointerPosition.x > PLOT_MARGIN.left &&
+ 941 |     pointerPosition.x < PLOT_MARGIN.left + plotInnerWidth &&
+ 942 |     pointerPosition.y > PLOT_MARGIN.top &&
+ 943 |     pointerPosition.y < PLOT_MARGIN.top + plotInnerHeight
+ 944 |   );
+ 945 | }
+ 946 | 
+ 947 | function clampScale(rawScale) {
+ 948 |   return Math.max(ZOOM_MIN, Math.min(rawScale, ZOOM_MAX));
+ 949 | }
+ 950 | 
+ 951 | function computeWheelScaleDelta(deltaY, isPinchGesture) {
+ 952 |   if (isPinchGesture) {
+ 953 |     return Math.exp(-deltaY * PINCH_ZOOM_SENSITIVITY);
+ 954 |   }
+ 955 |   return deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+ 956 | }
+ 957 | 
+ 958 | function clampContentOffset(
+ 959 |   rawX,
+ 960 |   rawY,
+ 961 |   scale,
+ 962 |   plotInnerWidth,
+ 963 |   plotInnerHeight,
+ 964 | ) {
+ 965 |   const scaledWidth = plotInnerWidth * scale;
+ 966 |   const scaledHeight = plotInnerHeight * scale;
+ 967 | 
+ 968 |   let clampedX;
+ 969 |   let clampedY;
+ 970 | 
+ 971 |   if (scaledWidth <= plotInnerWidth) {
+ 972 |     clampedX = (plotInnerWidth - scaledWidth) / 2;
+ 973 |   } else {
+ 974 |     const minX = plotInnerWidth - scaledWidth;
+ 975 |     const maxX = 0;
+ 976 |     clampedX = Math.max(minX, Math.min(rawX, maxX));
+ 977 |   }
+ 978 | 
+ 979 |   if (scaledHeight <= plotInnerHeight) {
+ 980 |     clampedY = (plotInnerHeight - scaledHeight) / 2;
+ 981 |   } else {
+ 982 |     const minY = plotInnerHeight - scaledHeight;
+ 983 |     const maxY = 0;
+ 984 |     clampedY = Math.max(minY, Math.min(rawY, maxY));
+ 985 |   }
+ 986 | 
+ 987 |   return { x: clampedX, y: clampedY };
+ 988 | }
+ 989 | 
+ 990 | function buildScales(plotterPoints, plotInnerWidth, plotInnerHeight) {
+ 991 |   const xValues = plotterPoints.map((p) => p.x);
+ 992 |   const yValues = plotterPoints.map((p) => p.y);
+ 993 | 
+ 994 |   const xMin = Math.min(...xValues);
+ 995 |   const xMax = Math.max(...xValues);
+ 996 |   const yMin = Math.min(...yValues);
+ 997 |   const yMax = Math.max(...yValues);
+ 998 | 
+ 999 |   const xPadding =
+1000 |     (xMax - xMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
+```
+
+### Chunk 6/6
+
+```jsx
+1001 |   const yPadding =
+1002 |     (yMax - yMin) * EXTENT_PADDING_RATIO || EXTENT_FALLBACK_PADDING;
+1003 | 
+1004 |   const xExtent = [xMin - xPadding, xMax + xPadding];
+1005 |   const yExtent = [yMin - yPadding, yMax + yPadding];
+1006 | 
+1007 |   const xScale = buildLinearScale(xExtent[0], xExtent[1], 0, plotInnerWidth);
+1008 |   const yScale = buildLinearScale(yExtent[0], yExtent[1], plotInnerHeight, 0);
+1009 | 
+1010 |   return { xScale, yScale, xExtent, yExtent };
+1011 | }
+1012 | 
+1013 | function computeVisibleDomain(
+1014 |   xExtent,
+1015 |   yExtent,
+1016 |   contentOffset,
+1017 |   scale,
+1018 |   plotInnerWidth,
+1019 |   plotInnerHeight,
+1020 | ) {
+1021 |   const domainWidth = xExtent[1] - xExtent[0];
+1022 |   const domainHeight = yExtent[1] - yExtent[0];
+1023 | 
+1024 |   const xMin =
+1025 |     xExtent[0] - (contentOffset.x / scale / plotInnerWidth) * domainWidth;
+1026 |   const xMax = xMin + domainWidth / scale;
+1027 | 
+1028 |   const yMax =
+1029 |     yExtent[1] + (contentOffset.y / scale / plotInnerHeight) * domainHeight;
+1030 |   const yMin = yMax - domainHeight / scale;
+1031 | 
+1032 |   return { xMin, xMax, yMin, yMax };
+1033 | }
+1034 | 
+1035 | function buildLinearScale(domainMin, domainMax, rangeMin, rangeMax) {
+1036 |   return (value) => {
+1037 |     const ratio = (value - domainMin) / (domainMax - domainMin);
+1038 |     return rangeMin + ratio * (rangeMax - rangeMin);
+1039 |   };
+1040 | }
+1041 | 
+1042 | function buildTicks(min, max, count) {
+1043 |   const rawStep = (max - min) / count;
+1044 |   const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+1045 |   const niceSteps = [1, 2, 2.5, 5, 10];
+1046 |   const step =
+1047 |     niceSteps.map((s) => s * magnitude).find((s) => s >= rawStep) ?? rawStep;
+1048 | 
+1049 |   const start = Math.ceil(min / step) * step;
+1050 |   const ticks = [];
+1051 | 
+1052 |   for (let tick = start; tick <= max + step * 0.001; tick += step) {
+1053 |     ticks.push(parseFloat(tick.toPrecision(10)));
+1054 |   }
+1055 | 
+1056 |   return ticks;
+1057 | }
+1058 | 
+1059 | function formatTickLabel(value) {
+1060 |   if (Math.abs(value) >= 1000) return value.toExponential(1);
+1061 |   const formattedString = value.toPrecision(4);
+1062 |   return parseFloat(formattedString).toString();
+1063 | }
+1064 | 
+1065 | export default KonvaPlotter;
+1066 | 
 ```
 
 
@@ -3803,12 +4475,12 @@ imagdPlotting
 ---
 
 ## 📄 src\components\PixiPlotter.jsx
-**hash:** `265f2eab`
+**hash:** `64bbc76a`
 
-### Chunk 1/5
+### Chunk 1/6
 
 ```jsx
-   1 | import { useRef, useEffect, useState, useCallback } from "react";
+   1 | import { useRef, useEffect, useState, useCallback, useMemo } from "react";
    2 | 
    3 | import {
    4 |   Application as PixiApp,
@@ -3823,1010 +4495,1196 @@ imagdPlotting
   13 | 
   14 | import { usePlotterData } from "../lib/plotterData";
   15 | import { computeImagePositions } from "../lib/gridLayout";
-  16 | import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
-  17 | import {
-  18 |   computeAdaptiveCellSize,
-  19 |   filterVisiblePoints,
-  20 |   computeEffectiveImageCount,
-  21 | } from "../lib/densityLayout";
+  16 | import {
+  17 |   CELL_SIZE,
+  18 |   PLOT_DIMENSIONS,
+  19 |   PLOT_MARGIN,
+  20 |   DATA_POINT_LIMITS,
+  21 | } from "../lib/constants";
   22 | import {
-  23 |   getChartViewport,
-  24 |   updateChartViewport,
-  25 | } from "../lib/chartViewportStore";
-  26 | import PlotterControls from "./PlotterControls";
-  27 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
-  28 | import { useInteractionMode } from "../lib/interactionMode";
-  29 | 
-  30 | const GRID_COLOR = 0x333333;
-  31 | const GRID_ALPHA = 0.45;
-  32 | const AXIS_BORDER_COLOR = 0x555555;
-  33 | const TICK_COLOR = "#999999";
-  34 | 
-  35 | const ZOOM_MIN = 0.3;
-  36 | const ZOOM_MAX = 100000;
-  37 | const ZOOM_STEP = 1.5;
-  38 | 
-  39 | /*
-  40 |  * CLAMP PAN
-  41 |  */
-  42 | function clampPan(xOffset, yOffset, scaleFactor, width, height) {
-  43 |   const scaledWidth = width * scaleFactor;
-  44 |   const scaledHeight = height * scaleFactor;
+  23 |   computeAdaptiveCellSize,
+  24 |   filterVisiblePoints,
+  25 |   computeEffectiveImageCount,
+  26 | } from "../lib/densityLayout";
+  27 | import {
+  28 |   getChartViewport,
+  29 |   updateChartViewport,
+  30 | } from "../lib/chartViewportStore";
+  31 | import PlotterControls from "./PlotterControls";
+  32 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+  33 | import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
+  34 | import { useInteractionMode } from "../lib/interactionMode";
+  35 | 
+  36 | const GRID_COLOR = 0x333333;
+  37 | const GRID_ALPHA = 0.45;
+  38 | const AXIS_BORDER_COLOR = 0x555555;
+  39 | const TICK_COLOR = "#999999";
+  40 | 
+  41 | const ZOOM_MIN = 1;
+  42 | const MIN_ZOOM_SCALE = 1.001;
+  43 | const ZOOM_MAX = 100000;
+  44 | const ZOOM_STEP = 1.5;
   45 | 
-  46 |   let minOffsetLimitX = width - scaledWidth;
-  47 |   let minOffsetLimitY = height - scaledHeight;
-  48 | 
-  49 |   if (scaledWidth < width) {
-  50 |     minOffsetLimitX = (width - scaledWidth) / 2;
-  51 |   }
-  52 | 
-  53 |   if (scaledHeight < height) {
-  54 |     minOffsetLimitY = (height - scaledHeight) / 2;
-  55 |   }
+  46 | /*
+  47 |  * CLAMP PAN
+  48 |  */
+  49 | function clampPan(xOffset, yOffset, scaleFactor, width, height) {
+  50 |   if (scaleFactor <= MIN_ZOOM_SCALE) {
+  51 |     return { x: 0, y: 0 };
+  52 |   }
+  53 | 
+  54 |   const scaledWidth = width * scaleFactor;
+  55 |   const scaledHeight = height * scaleFactor;
   56 | 
-  57 |   return {
-  58 |     x: Math.min(0, Math.max(minOffsetLimitX, xOffset)),
-  59 |     y: Math.min(0, Math.max(minOffsetLimitY, yOffset)),
-  60 |   };
-  61 | }
-  62 | 
-  63 | /*
-  64 |  * COMPUTE VIEWPORT SCALES
-  65 |  */
-  66 | function computeViewportScales(
-  67 |   baseScaleX,
-  68 |   baseScaleY,
-  69 |   scaleFactor,
-  70 |   xOffset,
-  71 |   yOffset,
-  72 |   width,
-  73 |   height,
-  74 | ) {
-  75 |   const leftPixel = -xOffset / scaleFactor;
-  76 |   const rightPixel = (width - xOffset) / scaleFactor;
-  77 | 
-  78 |   const topPixel = -yOffset / scaleFactor;
-  79 |   const bottomPixel = (height - yOffset) / scaleFactor;
-  80 | 
-  81 |   const visibleXMin = baseScaleX.invert(leftPixel);
-  82 |   const visibleXMax = baseScaleX.invert(rightPixel);
-  83 | 
-  84 |   const visibleYMax = baseScaleY.invert(topPixel);
-  85 |   const visibleYMin = baseScaleY.invert(bottomPixel);
-  86 | 
-  87 |   const dynamicXScale = d3
-  88 |     .scaleLinear()
-  89 |     .domain([visibleXMin, visibleXMax])
-  90 |     .range([0, width]);
+  57 |   let minOffsetLimitX = width - scaledWidth;
+  58 |   let minOffsetLimitY = height - scaledHeight;
+  59 | 
+  60 |   if (scaledWidth < width) {
+  61 |     minOffsetLimitX = (width - scaledWidth) / 2;
+  62 |   }
+  63 | 
+  64 |   if (scaledHeight < height) {
+  65 |     minOffsetLimitY = (height - scaledHeight) / 2;
+  66 |   }
+  67 | 
+  68 |   return {
+  69 |     x: Math.min(0, Math.max(minOffsetLimitX, xOffset)),
+  70 |     y: Math.min(0, Math.max(minOffsetLimitY, yOffset)),
+  71 |   };
+  72 | }
+  73 | 
+  74 | /*
+  75 |  * COMPUTE VIEWPORT SCALES
+  76 |  */
+  77 | function computeViewportScales(
+  78 |   baseScaleX,
+  79 |   baseScaleY,
+  80 |   scaleFactor,
+  81 |   xOffset,
+  82 |   yOffset,
+  83 |   width,
+  84 |   height,
+  85 | ) {
+  86 |   const leftPixel = -xOffset / scaleFactor;
+  87 |   const rightPixel = (width - xOffset) / scaleFactor;
+  88 | 
+  89 |   const topPixel = -yOffset / scaleFactor;
+  90 |   const bottomPixel = (height - yOffset) / scaleFactor;
   91 | 
-  92 |   const dynamicYScale = d3
-  93 |     .scaleLinear()
-  94 |     .domain([visibleYMin, visibleYMax])
-  95 |     .range([height, 0]);
-  96 | 
-  97 |   return {
-  98 |     dynamicXScale,
-  99 |     dynamicYScale,
- 100 |   };
- 101 | }
+  92 |   const visibleXMin = baseScaleX.invert(leftPixel);
+  93 |   const visibleXMax = baseScaleX.invert(rightPixel);
+  94 | 
+  95 |   const visibleYMax = baseScaleY.invert(topPixel);
+  96 |   const visibleYMin = baseScaleY.invert(bottomPixel);
+  97 | 
+  98 |   const dynamicXScale = d3
+  99 |     .scaleLinear()
+ 100 |     .domain([visibleXMin, visibleXMax])
+ 101 |     .range([0, width]);
  102 | 
- 103 | /*
- 104 |  * INITIALIZE PIXI APP
- 105 |  */
- 106 | async function initializePixiApp(containerElement, innerWidth, innerHeight) {
- 107 |   const app = new PixiApp();
- 108 | 
- 109 |   await app.init({
- 110 |     width: PLOT_DIMENSIONS.width,
- 111 |     height: PLOT_DIMENSIONS.height,
- 112 |     background: 0x16213e,
- 113 |     antialias: true,
- 114 |   });
- 115 | 
- 116 |   containerElement.appendChild(app.canvas);
- 117 | 
- 118 |   const axesLayer = new Container();
- 119 |   axesLayer.x = PLOT_MARGIN.left;
- 120 |   axesLayer.y = PLOT_MARGIN.top;
- 121 |   app.stage.addChild(axesLayer);
- 122 | 
- 123 |   const contentLayer = new Container();
- 124 |   contentLayer.x = PLOT_MARGIN.left;
- 125 |   contentLayer.y = PLOT_MARGIN.top;
- 126 |   app.stage.addChild(contentLayer);
- 127 | 
- 128 |   const mask = new Graphics();
- 129 |   mask.rect(PLOT_MARGIN.left, PLOT_MARGIN.top, innerWidth, innerHeight);
- 130 |   mask.fill(0xffffff);
- 131 |   app.stage.addChild(mask);
- 132 |   contentLayer.mask = mask;
+ 103 |   const dynamicYScale = d3
+ 104 |     .scaleLinear()
+ 105 |     .domain([visibleYMin, visibleYMax])
+ 106 |     .range([height, 0]);
+ 107 | 
+ 108 |   return {
+ 109 |     dynamicXScale,
+ 110 |     dynamicYScale,
+ 111 |   };
+ 112 | }
+ 113 | 
+ 114 | /*
+ 115 |  * INITIALIZE PIXI APP
+ 116 |  */
+ 117 | async function initializePixiApp(containerElement, innerWidth, innerHeight) {
+ 118 |   const app = new PixiApp();
+ 119 | 
+ 120 |   await app.init({
+ 121 |     width: PLOT_DIMENSIONS.width,
+ 122 |     height: PLOT_DIMENSIONS.height,
+ 123 |     background: 0x16213e,
+ 124 |     antialias: true,
+ 125 |   });
+ 126 | 
+ 127 |   containerElement.appendChild(app.canvas);
+ 128 | 
+ 129 |   const axesLayer = new Container();
+ 130 |   axesLayer.x = PLOT_MARGIN.left;
+ 131 |   axesLayer.y = PLOT_MARGIN.top;
+ 132 |   app.stage.addChild(axesLayer);
  133 | 
- 134 |   const brushGraphics = new Graphics();
- 135 |   app.stage.addChild(brushGraphics);
- 136 | 
- 137 |   return {
- 138 |     app,
- 139 |     axesLayer,
- 140 |     contentLayer,
- 141 |     mask,
- 142 |     brushGraphics,
- 143 |   };
- 144 | }
- 145 | 
- 146 | /*
- 147 |  * APPLY BRUSH ZOOM TO TRANSFORM
- 148 |  */
- 149 | function applyBrushZoom(
- 150 |   { startX, startY, width, height },
- 151 |   transformRef,
- 152 |   innerWidth,
- 153 |   innerHeight,
- 154 | ) {
- 155 |   const currentScale = transformRef.current.scale;
- 156 |   const currentX = transformRef.current.x;
- 157 |   const currentY = transformRef.current.y;
- 158 | 
- 159 |   const contentX0 = (startX - currentX) / currentScale;
- 160 |   const contentY0 = (startY - currentY) / currentScale;
- 161 |   const contentWidth = width / currentScale;
- 162 |   const contentHeight = height / currentScale;
- 163 | 
- 164 |   const scaleFactorX = innerWidth / contentWidth;
- 165 |   const scaleFactorY = innerHeight / contentHeight;
- 166 |   const nextScale = Math.max(
- 167 |     ZOOM_MIN,
- 168 |     Math.min(Math.min(scaleFactorX, scaleFactorY), ZOOM_MAX),
- 169 |   );
- 170 | 
- 171 |   const offsetCoordinateX = -contentX0 * nextScale;
- 172 |   const offsetCoordinateY = -contentY0 * nextScale;
- 173 | 
- 174 |   const clamped = clampPan(
- 175 |     offsetCoordinateX,
- 176 |     offsetCoordinateY,
- 177 |     nextScale,
- 178 |     innerWidth,
- 179 |     innerHeight,
+ 134 |   const contentLayer = new Container();
+ 135 |   contentLayer.x = PLOT_MARGIN.left;
+ 136 |   contentLayer.y = PLOT_MARGIN.top;
+ 137 |   app.stage.addChild(contentLayer);
+ 138 | 
+ 139 |   const mask = new Graphics();
+ 140 |   mask.rect(PLOT_MARGIN.left, PLOT_MARGIN.top, innerWidth, innerHeight);
+ 141 |   mask.fill(0xffffff);
+ 142 |   app.stage.addChild(mask);
+ 143 |   contentLayer.mask = mask;
+ 144 | 
+ 145 |   const brushGraphics = new Graphics();
+ 146 |   app.stage.addChild(brushGraphics);
+ 147 | 
+ 148 |   return {
+ 149 |     app,
+ 150 |     axesLayer,
+ 151 |     contentLayer,
+ 152 |     mask,
+ 153 |     brushGraphics,
+ 154 |   };
+ 155 | }
+ 156 | 
+ 157 | /*
+ 158 |  * APPLY BRUSH ZOOM TO TRANSFORM
+ 159 |  */
+ 160 | function applyBrushZoom(
+ 161 |   { startX, startY, width, height },
+ 162 |   transformRef,
+ 163 |   innerWidth,
+ 164 |   innerHeight,
+ 165 | ) {
+ 166 |   const currentScale = transformRef.current.scale;
+ 167 |   const currentX = transformRef.current.x;
+ 168 |   const currentY = transformRef.current.y;
+ 169 | 
+ 170 |   const contentX0 = (startX - currentX) / currentScale;
+ 171 |   const contentY0 = (startY - currentY) / currentScale;
+ 172 |   const contentWidth = width / currentScale;
+ 173 |   const contentHeight = height / currentScale;
+ 174 | 
+ 175 |   const scaleFactorX = innerWidth / contentWidth;
+ 176 |   const scaleFactorY = innerHeight / contentHeight;
+ 177 |   const nextScale = Math.max(
+ 178 |     ZOOM_MIN,
+ 179 |     Math.min(Math.min(scaleFactorX, scaleFactorY), ZOOM_MAX),
  180 |   );
- 181 |   return {
- 182 |     scale: nextScale,
- 183 |     x: clamped.x,
- 184 |     y: clamped.y,
- 185 |   };
- 186 | }
- 187 | 
- 188 | /*
- 189 |  * DRAW BRUSH OVERLAY
- 190 |  */
- 191 | function drawBrushOverlay(graphics, startX, startY, width, height) {
- 192 |   if (!graphics) return;
- 193 |   graphics.clear();
- 194 |   if (width > 0 && height > 0) {
- 195 |     graphics.rect(
- 196 |       PLOT_MARGIN.left + startX,
- 197 |       PLOT_MARGIN.top + startY,
- 198 |       width,
- 199 |       height,
- 200 |     );
+ 181 | 
+ 182 |   const offsetCoordinateX = -contentX0 * nextScale;
+ 183 |   const offsetCoordinateY = -contentY0 * nextScale;
+ 184 | 
+ 185 |   const clamped = clampPan(
+ 186 |     offsetCoordinateX,
+ 187 |     offsetCoordinateY,
+ 188 |     nextScale,
+ 189 |     innerWidth,
+ 190 |     innerHeight,
+ 191 |   );
+ 192 |   return {
+ 193 |     scale: nextScale,
+ 194 |     x: clamped.x,
+ 195 |     y: clamped.y,
+ 196 |   };
+ 197 | }
+ 198 | 
+ 199 | /*
+ 200 |  * DRAW BRUSH OVERLAY
 ```
 
-### Chunk 2/5
+### Chunk 2/6
 
 ```jsx
- 201 |     graphics.fill({ color: 0x4493ff, alpha: 0.15 });
- 202 |     graphics.stroke({ width: 1.5, color: 0x4493ff });
- 203 |   }
- 204 | }
- 205 | 
- 206 | function PixiPlotter({ chartId, imageCount, xGap, yGap, syntheticPoints }) {
- 207 |   const {
- 208 |     plotterPoints: fetchedPoints,
- 209 |     isLoading,
- 210 |     loadError,
- 211 |   } = usePlotterData();
- 212 |   const plotterPoints = syntheticPoints || fetchedPoints;
- 213 | 
- 214 |   if (!syntheticPoints && isLoading) {
- 215 |     return <div>Loading...</div>;
- 216 |   }
- 217 | 
- 218 |   if (!syntheticPoints && loadError) {
- 219 |     return <div>Error: {loadError}</div>;
- 220 |   }
- 221 | 
- 222 |   return (
- 223 |     <PixiCanvas
- 224 |       plotterPoints={plotterPoints}
- 225 |       imageCount={imageCount}
- 226 |       xGap={xGap}
- 227 |       yGap={yGap}
- 228 |       chartId={chartId}
- 229 |     />
- 230 |   );
- 231 | }
- 232 | 
- 233 | function PixiCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
- 234 |   const containerRef = useRef(null);
- 235 |   const pixiAppRef = useRef(null);
- 236 |   const axesLayerRef = useRef(null);
- 237 |   const contentLayerRef = useRef(null);
- 238 |   const maskRef = useRef(null);
- 239 |   const tooltipRef = useRef(null);
- 240 |   const brushGraphicsRef = useRef(null);
- 241 |   const brushStartRef = useRef(null);
- 242 | 
- 243 |   const baseScalesRef = useRef({
- 244 |     xScale: null,
- 245 |     yScale: null,
- 246 |   });
- 247 | 
- 248 |   const savedViewport = getChartViewport(chartId);
- 249 | 
- 250 |   const transformRef = useRef({
- 251 |     scale: savedViewport.scale || 1,
- 252 |     x: savedViewport.translateX || 0,
- 253 |     y: savedViewport.translateY || 0,
- 254 |   });
- 255 | 
- 256 |   const dragRef = useRef({
- 257 |     dragging: false,
- 258 |     startX: 0,
- 259 |     startY: 0,
- 260 |   });
- 261 | 
- 262 |   const [zoomLevel, setZoomLevel] = useState(savedViewport.scale || 1);
- 263 |   const [isDragging, setIsDragging] = useState(false);
- 264 | 
- 265 |   const { interactionMode, setInteractionMode, isPanMode } =
- 266 |     useInteractionMode();
- 267 | 
- 268 |   const innerWidth =
- 269 |     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
- 270 |   const innerHeight =
- 271 |     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+ 201 |  */
+ 202 | function drawBrushOverlay(graphics, startX, startY, width, height) {
+ 203 |   if (!graphics) return;
+ 204 |   graphics.clear();
+ 205 |   if (width > 0 && height > 0) {
+ 206 |     graphics.rect(
+ 207 |       PLOT_MARGIN.left + startX,
+ 208 |       PLOT_MARGIN.top + startY,
+ 209 |       width,
+ 210 |       height,
+ 211 |     );
+ 212 |     graphics.fill({ color: 0x4493ff, alpha: 0.15 });
+ 213 |     graphics.stroke({ width: 1.5, color: 0x4493ff });
+ 214 |   }
+ 215 | }
+ 216 | 
+ 217 | function PixiPlotter({ chartId, imageCount, xGap, yGap, dataPointCount }) {
+ 218 |   const {
+ 219 |     plotterPoints: fetchedPoints,
+ 220 |     isLoading,
+ 221 |     loadError,
+ 222 |   } = usePlotterData();
+ 223 | 
+ 224 |   const syntheticPoints = useMemo(() => {
+ 225 |     return generateSyntheticPoints(
+ 226 |       Math.max(
+ 227 |         DATA_POINT_LIMITS.min,
+ 228 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
+ 229 |       ),
+ 230 |     );
+ 231 |   }, [dataPointCount]);
+ 232 |   const plotterPoints = syntheticPoints || fetchedPoints;
+ 233 | 
+ 234 |   if (!syntheticPoints && isLoading) {
+ 235 |     return <div>Loading...</div>;
+ 236 |   }
+ 237 | 
+ 238 |   if (!syntheticPoints && loadError) {
+ 239 |     return <div>Error: {loadError}</div>;
+ 240 |   }
+ 241 | 
+ 242 |   return (
+ 243 |     <PixiCanvas
+ 244 |       plotterPoints={plotterPoints}
+ 245 |       imageCount={imageCount}
+ 246 |       xGap={xGap}
+ 247 |       yGap={yGap}
+ 248 |       chartId={chartId}
+ 249 |     />
+ 250 |   );
+ 251 | }
+ 252 | 
+ 253 | function PixiCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
+ 254 |   const containerRef = useRef(null);
+ 255 |   const pixiAppRef = useRef(null);
+ 256 |   const axesLayerRef = useRef(null);
+ 257 |   const contentLayerRef = useRef(null);
+ 258 |   const maskRef = useRef(null);
+ 259 |   const tooltipRef = useRef(null);
+ 260 |   const brushGraphicsRef = useRef(null);
+ 261 |   const brushStartRef = useRef(null);
+ 262 |   const renderFrameRef = useRef(null);
+ 263 |   const loadedImageUrlsRef = useRef([]);
+ 264 |   const baseScalesRef = useRef({
+ 265 |     xScale: null,
+ 266 |     yScale: null,
+ 267 |   });
+ 268 | 
+ 269 |   const savedViewport = getChartViewport(chartId);
+ 270 | 
+ 271 |   const initialScale = Math.max(savedViewport.scale || 1, ZOOM_MIN);
  272 | 
- 273 |   /*
- 274 |    * GET VIEWPORT SCALES
- 275 |    */
- 276 |   const getViewportScales = useCallback(() => {
- 277 |     const baseScaleX = baseScalesRef.current.xScale;
- 278 |     const baseScaleY = baseScalesRef.current.yScale;
- 279 | 
- 280 |     if (!baseScaleX || !baseScaleY) {
- 281 |       return null;
- 282 |     }
- 283 | 
- 284 |     const { scale, x, y } = transformRef.current;
- 285 | 
- 286 |     return computeViewportScales(
- 287 |       baseScaleX,
- 288 |       baseScaleY,
- 289 |       scale,
- 290 |       x,
- 291 |       y,
- 292 |       innerWidth,
- 293 |       innerHeight,
- 294 |     );
- 295 |   }, [innerWidth, innerHeight]);
- 296 | 
- 297 |   /*
- 298 |    * RENDER AXES
- 299 |    */
- 300 |   const renderAxes = useCallback(() => {
- 301 |     if (!axesLayerRef.current) return;
- 302 | 
- 303 |     const viewportScales = getViewportScales();
- 304 |     if (!viewportScales) return;
- 305 | 
- 306 |     const axesLayer = axesLayerRef.current;
- 307 |     axesLayer.removeChildren();
- 308 | 
- 309 |     drawGrid(
- 310 |       axesLayer,
- 311 |       viewportScales.dynamicXScale,
- 312 |       viewportScales.dynamicYScale,
- 313 |       innerWidth,
- 314 |       innerHeight,
- 315 |     );
+ 273 |   const transformRef = useRef(
+ 274 |     initialScale <= MIN_ZOOM_SCALE
+ 275 |       ? {
+ 276 |           scale: 1,
+ 277 |           x: 0,
+ 278 |           y: 0,
+ 279 |         }
+ 280 |       : {
+ 281 |           scale: initialScale,
+ 282 |           x: savedViewport.translateX || 0,
+ 283 |           y: savedViewport.translateY || 0,
+ 284 |         },
+ 285 |   );
+ 286 | 
+ 287 |   const dragRef = useRef({
+ 288 |     dragging: false,
+ 289 |     startX: 0,
+ 290 |     startY: 0,
+ 291 |   });
+ 292 | 
+ 293 |   const [zoomLevel, setZoomLevel] = useState(savedViewport.scale);
+ 294 |   const [isDragging, setIsDragging] = useState(false);
+ 295 | 
+ 296 |   const { interactionMode, setInteractionMode, isPanMode, isZoomMode } =
+ 297 |     useInteractionMode();
+ 298 | 
+ 299 |   const innerWidth =
+ 300 |     PLOT_DIMENSIONS.width - PLOT_MARGIN.left - PLOT_MARGIN.right;
+ 301 |   const innerHeight =
+ 302 |     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
+ 303 | 
+ 304 |   /*
+ 305 |    * GET VIEWPORT SCALES
+ 306 |    */
+ 307 |   const getViewportScales = useCallback(() => {
+ 308 |     const baseScaleX = baseScalesRef.current.xScale;
+ 309 |     const baseScaleY = baseScalesRef.current.yScale;
+ 310 | 
+ 311 |     if (!baseScaleX || !baseScaleY) {
+ 312 |       return null;
+ 313 |     }
+ 314 | 
+ 315 |     const { scale, x, y } = transformRef.current;
  316 | 
- 317 |     drawAxesLabels(
- 318 |       axesLayer,
- 319 |       viewportScales.dynamicXScale,
- 320 |       viewportScales.dynamicYScale,
- 321 |       innerWidth,
- 322 |       innerHeight,
- 323 |     );
- 324 |   }, [getViewportScales, innerWidth, innerHeight]);
- 325 | 
- 326 |   /*
- 327 |    * APPLY TRANSFORM — redraws points from current viewport scales (deep zoom).
- 328 |    * Content layer is always identity; no matrix upscaling of sprites.
- 329 |    */
- 330 |   const applyTransform = useCallback(() => {
- 331 |     if (!contentLayerRef.current) return;
- 332 | 
- 333 |     const viewportScales = getViewportScales();
- 334 |     if (!viewportScales) return;
- 335 | 
- 336 |     const { dynamicXScale, dynamicYScale } = viewportScales;
- 337 |     const { scale } = transformRef.current;
- 338 | 
- 339 |     const contentLayer = contentLayerRef.current;
- 340 |     contentLayer.removeChildren();
- 341 |     contentLayer.scale.set(1);
- 342 |     contentLayer.x = PLOT_MARGIN.left;
- 343 |     contentLayer.y = PLOT_MARGIN.top;
- 344 | 
- 345 |     const baseScaleX = baseScalesRef.current.xScale;
- 346 |     const baseScaleY = baseScalesRef.current.yScale;
- 347 |     if (!baseScaleX || !baseScaleY) return;
- 348 | 
- 349 |     const scaledPoints = plotterPoints.map((point) => ({
- 350 |       ...point,
- 351 |       scaledX: point.x * (xGap / 10),
- 352 |       scaledY: point.y * (yGap / 10),
- 353 |     }));
- 354 | 
- 355 |     /* Same pattern as Recharts: base cell size × current zoom scale. */
- 356 |     const adaptiveCellSizeBase = computeAdaptiveCellSize(
- 357 |       scaledPoints,
- 358 |       (val) => baseScaleX(val),
- 359 |       (val) => baseScaleY(val),
- 360 |     );
- 361 |     const currentCellSize = adaptiveCellSizeBase * scale;
- 362 | 
- 363 |     /* Screen-space culling. */
- 364 |     const xScreenFn = (val) => baseScaleX(val) * scale + transformRef.current.x;
- 365 |     const yScreenFn = (val) => baseScaleY(val) * scale + transformRef.current.y;
- 366 |     const visiblePoints = filterVisiblePoints(
- 367 |       scaledPoints,
- 368 |       xScreenFn,
- 369 |       yScreenFn,
- 370 |       innerWidth,
- 371 |       innerHeight,
- 372 |       currentCellSize,
- 373 |     );
- 374 | 
- 375 |     const effectiveImageCount = computeEffectiveImageCount(
- 376 |       currentCellSize,
- 377 |       imageCount,
- 378 |     );
+ 317 |     return computeViewportScales(
+ 318 |       baseScaleX,
+ 319 |       baseScaleY,
+ 320 |       scale,
+ 321 |       x,
+ 322 |       y,
+ 323 |       innerWidth,
+ 324 |       innerHeight,
+ 325 |     );
+ 326 |   }, [innerWidth, innerHeight]);
+ 327 | 
+ 328 |   /*
+ 329 |    * RENDER AXES
+ 330 |    */
+ 331 |   const renderAxes = useCallback(() => {
+ 332 |     if (!axesLayerRef.current) return;
+ 333 | 
+ 334 |     const viewportScales = getViewportScales();
+ 335 |     if (!viewportScales) return;
+ 336 | 
+ 337 |     const axesLayer = axesLayerRef.current;
+ 338 |     axesLayer.removeChildren();
+ 339 | 
+ 340 |     drawGrid(
+ 341 |       axesLayer,
+ 342 |       viewportScales.dynamicXScale,
+ 343 |       viewportScales.dynamicYScale,
+ 344 |       innerWidth,
+ 345 |       innerHeight,
+ 346 |     );
+ 347 | 
+ 348 |     drawAxesLabels(
+ 349 |       axesLayer,
+ 350 |       viewportScales.dynamicXScale,
+ 351 |       viewportScales.dynamicYScale,
+ 352 |       innerWidth,
+ 353 |       innerHeight,
+ 354 |     );
+ 355 |   }, [getViewportScales, innerWidth, innerHeight]);
+ 356 | 
+ 357 |   /*
+ 358 |    * APPLY TRANSFORM — redraws points from current viewport scales (deep zoom).
+ 359 |    * Content layer is always identity; no matrix upscaling of sprites.
+ 360 |    */
+ 361 |   const applyTransform = useCallback(() => {
+ 362 |     if (!contentLayerRef.current) return;
+ 363 | 
+ 364 |     const viewportScales = getViewportScales();
+ 365 |     if (!viewportScales) return;
+ 366 | 
+ 367 |     const { dynamicXScale, dynamicYScale } = viewportScales;
+ 368 |     const { scale } = transformRef.current;
+ 369 | 
+ 370 |     const contentLayer = contentLayerRef.current;
+ 371 |     contentLayer.removeChildren();
+ 372 |     contentLayer.scale.set(1);
+ 373 |     contentLayer.x = PLOT_MARGIN.left;
+ 374 |     contentLayer.y = PLOT_MARGIN.top;
+ 375 | 
+ 376 |     const baseScaleX = baseScalesRef.current.xScale;
+ 377 |     const baseScaleY = baseScalesRef.current.yScale;
+ 378 |     if (!baseScaleX || !baseScaleY) return;
  379 | 
- 380 |     drawPoints(
- 381 |       contentLayer,
- 382 |       visiblePoints,
- 383 |       dynamicXScale,
- 384 |       dynamicYScale,
- 385 |       effectiveImageCount,
- 386 |       tooltipRef,
- 387 |       currentCellSize,
- 388 |     );
- 389 | 
- 390 |     renderAxes();
- 391 |   }, [
- 392 |     getViewportScales,
- 393 |     renderAxes,
- 394 |     plotterPoints,
- 395 |     xGap,
- 396 |     yGap,
- 397 |     innerWidth,
- 398 |     innerHeight,
- 399 |     imageCount,
- 400 |   ]);
+ 380 |     const scaledPoints = plotterPoints.map((point) => ({
+ 381 |       ...point,
+ 382 |       scaledX: point.x * (xGap / 10),
+ 383 |       scaledY: point.y * (yGap / 10),
+ 384 |     }));
+ 385 | 
+ 386 |     /* Same pattern as Recharts: base cell size × current zoom scale. */
+ 387 |     const adaptiveCellSizeBase = computeAdaptiveCellSize(
+ 388 |       scaledPoints,
+ 389 |       (val) => baseScaleX(val),
+ 390 |       (val) => baseScaleY(val),
+ 391 |     );
+ 392 |     const currentCellSize = adaptiveCellSizeBase * scale;
+ 393 | 
+ 394 |     /* Screen-space culling. */
+ 395 |     const xScreenFn = (val) => baseScaleX(val) * scale + transformRef.current.x;
+ 396 |     const yScreenFn = (val) => baseScaleY(val) * scale + transformRef.current.y;
+ 397 |     const visiblePoints = filterVisiblePoints(
+ 398 |       scaledPoints,
+ 399 |       xScreenFn,
+ 400 |       yScreenFn,
 ```
 
-### Chunk 3/5
+### Chunk 3/6
 
 ```jsx
- 401 | 
- 402 |   /*
- 403 |    * MAIN RENDER — loads assets then delegates to applyTransform for drawing.
- 404 |    */
- 405 |   const renderScene = useCallback(async () => {
- 406 |     if (!axesLayerRef.current || !contentLayerRef.current) return;
- 407 | 
- 408 |     const scaledPoints = plotterPoints.map((point) => ({
- 409 |       ...point,
- 410 |       scaledX: point.x * (xGap / 10),
- 411 |       scaledY: point.y * (yGap / 10),
- 412 |     }));
- 413 | 
- 414 |     const xDomainExtent = d3.extent(scaledPoints, (point) => point.scaledX);
- 415 |     const yDomainExtent = d3.extent(scaledPoints, (point) => point.scaledY);
- 416 | 
- 417 |     const baseScaleX = d3
- 418 |       .scaleLinear()
- 419 |       .domain([xDomainExtent[0] - 5, xDomainExtent[1] + 5])
- 420 |       .range([0, innerWidth]);
- 421 | 
- 422 |     const baseScaleY = d3
- 423 |       .scaleLinear()
- 424 |       .domain([yDomainExtent[0] - 5, yDomainExtent[1] + 5])
- 425 |       .range([innerHeight, 0]);
- 426 | 
- 427 |     baseScalesRef.current = { xScale: baseScaleX, yScale: baseScaleY };
- 428 |     renderAxes();
- 429 | 
- 430 |     const uniqueImageUrls = [
- 431 |       ...new Set(plotterPoints.map((point) => point.image)),
- 432 |     ];
- 433 |     await Assets.load(uniqueImageUrls);
- 434 | 
- 435 |     applyTransform();
- 436 |   }, [
- 437 |     plotterPoints,
- 438 |     xGap,
- 439 |     yGap,
- 440 |     innerWidth,
- 441 |     innerHeight,
- 442 |     renderAxes,
- 443 |     applyTransform,
- 444 |   ]);
- 445 | 
- 446 |   /*
- 447 |    * ZOOM
- 448 |    */
- 449 |   const zoom = useCallback(
- 450 |     (direction, interactionSource = "button") => {
- 451 |       logChartInteractionEvent({
- 452 |         interactionType: direction === "in" ? "ZOOM_IN" : "ZOOM_OUT",
- 453 |         visualizationLibrary: "Pixi",
- 454 |         interactionSource: interactionSource,
- 455 |       });
- 456 |       const currentScale = transformRef.current.scale;
+ 401 |       innerWidth,
+ 402 |       innerHeight,
+ 403 |       currentCellSize,
+ 404 |     );
+ 405 | 
+ 406 |     const effectiveImageCount = computeEffectiveImageCount(
+ 407 |       currentCellSize,
+ 408 |       imageCount,
+ 409 |     );
+ 410 | 
+ 411 |     drawPoints(
+ 412 |       contentLayer,
+ 413 |       visiblePoints,
+ 414 |       dynamicXScale,
+ 415 |       dynamicYScale,
+ 416 |       effectiveImageCount,
+ 417 |       tooltipRef,
+ 418 |       currentCellSize,
+ 419 |     );
+ 420 | 
+ 421 |     renderAxes();
+ 422 |   }, [
+ 423 |     getViewportScales,
+ 424 |     renderAxes,
+ 425 |     plotterPoints,
+ 426 |     xGap,
+ 427 |     yGap,
+ 428 |     innerWidth,
+ 429 |     innerHeight,
+ 430 |     imageCount,
+ 431 |   ]);
+ 432 | 
+ 433 |   /*
+ 434 |    * MAIN RENDER — loads assets then delegates to applyTransform for drawing.
+ 435 |    */
+ 436 |   const renderScene = useCallback(async () => {
+ 437 |     if (!axesLayerRef.current || !contentLayerRef.current) return;
+ 438 | 
+ 439 |     const scaledPoints = plotterPoints.map((point) => ({
+ 440 |       ...point,
+ 441 |       scaledX: point.x * (xGap / 10),
+ 442 |       scaledY: point.y * (yGap / 10),
+ 443 |     }));
+ 444 | 
+ 445 |     const xDomainExtent = d3.extent(scaledPoints, (point) => point.scaledX);
+ 446 |     const yDomainExtent = d3.extent(scaledPoints, (point) => point.scaledY);
+ 447 | 
+ 448 |     const baseScaleX = d3
+ 449 |       .scaleLinear()
+ 450 |       .domain([xDomainExtent[0] - 5, xDomainExtent[1] + 5])
+ 451 |       .range([0, innerWidth]);
+ 452 | 
+ 453 |     const baseScaleY = d3
+ 454 |       .scaleLinear()
+ 455 |       .domain([yDomainExtent[0] - 5, yDomainExtent[1] + 5])
+ 456 |       .range([innerHeight, 0]);
  457 | 
- 458 |       const nextScale =
- 459 |         direction === "in"
- 460 |           ? Math.min(currentScale * ZOOM_STEP, ZOOM_MAX)
- 461 |           : Math.max(currentScale / ZOOM_STEP, ZOOM_MIN);
- 462 | 
- 463 |       const plotCenterX = innerWidth / 2;
- 464 |       const plotCenterY = innerHeight / 2;
- 465 | 
- 466 |       const nextTransformOffsetX =
- 467 |         transformRef.current.x - plotCenterX * (nextScale / currentScale - 1);
+ 458 |     baseScalesRef.current = { xScale: baseScaleX, yScale: baseScaleY };
+ 459 |     renderAxes();
+ 460 | 
+ 461 |     const uniqueImageUrls = [
+ 462 |       ...new Set(plotterPoints.map((point) => point.image).filter(Boolean)),
+ 463 |     ];
+ 464 | 
+ 465 |     loadedImageUrlsRef.current = uniqueImageUrls;
+ 466 | 
+ 467 |     await Assets.load(uniqueImageUrls);
  468 | 
- 469 |       const nextTransformOffsetY =
- 470 |         transformRef.current.y - plotCenterY * (nextScale / currentScale - 1);
- 471 | 
- 472 |       const clampedTransformOffset = clampPan(
- 473 |         nextTransformOffsetX,
- 474 |         nextTransformOffsetY,
- 475 |         nextScale,
- 476 |         innerWidth,
- 477 |         innerHeight,
- 478 |       );
+ 469 |     applyTransform();
+ 470 |   }, [
+ 471 |     plotterPoints,
+ 472 |     xGap,
+ 473 |     yGap,
+ 474 |     innerWidth,
+ 475 |     innerHeight,
+ 476 |     renderAxes,
+ 477 |     applyTransform,
+ 478 |   ]);
  479 | 
- 480 |       transformRef.current = {
- 481 |         scale: nextScale,
- 482 |         x: clampedTransformOffset.x,
- 483 |         y: clampedTransformOffset.y,
- 484 |       };
- 485 | 
- 486 |       updateChartViewport(chartId, {
- 487 |         scale: nextScale,
- 488 |         translateX: clampedTransformOffset.x,
- 489 |         translateY: clampedTransformOffset.y,
- 490 |       });
- 491 | 
- 492 |       setZoomLevel(nextScale);
- 493 |       applyTransform();
- 494 |     },
- 495 |     [innerWidth, innerHeight, chartId, applyTransform],
- 496 |   );
- 497 | 
- 498 |   /*
- 499 |    * RESET
- 500 |    */
- 501 |   const reset = useCallback(
- 502 |     (interactionSource) => {
- 503 |       const computedSource =
- 504 |         interactionSource && typeof interactionSource === "string"
- 505 |           ? interactionSource
- 506 |           : "button";
- 507 | 
- 508 |       logChartInteractionEvent({
- 509 |         interactionType: "RESET",
- 510 |         visualizationLibrary: "Pixi",
- 511 |         interactionSource: computedSource,
- 512 |       });
- 513 | 
- 514 |       transformRef.current = {
- 515 |         scale: 1,
- 516 |         x: 0,
- 517 |         y: 0,
- 518 |       };
- 519 |       updateChartViewport(chartId, {
- 520 |         scale: 1,
- 521 |         translateX: 0,
- 522 |         translateY: 0,
- 523 |       });
- 524 | 
- 525 |       setZoomLevel(1);
- 526 |       applyTransform();
- 527 |     },
- 528 |     [applyTransform, chartId],
- 529 |   );
- 530 | 
- 531 |   /*
- 532 |    * CANVAS INTERACTIONS
- 533 |    */
- 534 |   const onCanvasMouseDown = useCallback(
- 535 |     (event) => {
- 536 |       if (isPanMode) {
- 537 |         logChartInteractionEvent({
- 538 |           interactionType: "PAN",
- 539 |           visualizationLibrary: "Pixi",
- 540 |           interactionSource: "drag",
- 541 |         });
- 542 |         setIsDragging(true);
- 543 |         dragRef.current.dragging = true;
- 544 |         dragRef.current.startX = event.clientX - transformRef.current.x;
- 545 |         dragRef.current.startY = event.clientY - transformRef.current.y;
- 546 |       } else {
- 547 |         if (!containerRef.current) return;
- 548 |         const rect = containerRef.current.getBoundingClientRect();
- 549 |         const localX = event.clientX - rect.left - PLOT_MARGIN.left;
- 550 |         const localY = event.clientY - rect.top - PLOT_MARGIN.top;
- 551 | 
- 552 |         if (
- 553 |           localX >= 0 &&
- 554 |           localX <= innerWidth &&
- 555 |           localY >= 0 &&
- 556 |           localY <= innerHeight
- 557 |         ) {
- 558 |           brushStartRef.current = { x: localX, y: localY };
- 559 |         }
- 560 |       }
- 561 |     },
- 562 |     [isPanMode, innerWidth, innerHeight],
- 563 |   );
- 564 | 
- 565 |   const onCanvasMouseMove = useCallback(
- 566 |     (event) => {
- 567 |       if (dragRef.current.dragging) {
- 568 |         const nextX = event.clientX - dragRef.current.startX;
- 569 |         const nextY = event.clientY - dragRef.current.startY;
- 570 |         const clamped = clampPan(
- 571 |           nextX,
- 572 |           nextY,
- 573 |           transformRef.current.scale,
- 574 |           innerWidth,
- 575 |           innerHeight,
- 576 |         );
- 577 | 
- 578 |         transformRef.current.x = clamped.x;
- 579 |         transformRef.current.y = clamped.y;
- 580 | 
- 581 |         updateChartViewport(chartId, {
- 582 |           scale: transformRef.current.scale,
- 583 |           translateX: clamped.x,
- 584 |           translateY: clamped.y,
- 585 |         });
- 586 | 
- 587 |         applyTransform();
- 588 |         return;
- 589 |       }
- 590 | 
- 591 |       if (brushStartRef.current) {
- 592 |         if (!containerRef.current) return;
- 593 |         const rect = containerRef.current.getBoundingClientRect();
- 594 |         const localX = Math.max(
- 595 |           0,
- 596 |           Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left),
- 597 |         );
- 598 |         const localY = Math.max(
- 599 |           0,
- 600 |           Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top),
+ 480 |   /*
+ 481 |    * ZOOM
+ 482 |    */
+ 483 |   const zoom = useCallback(
+ 484 |     (direction, interactionSource = "button") => {
+ 485 |       const currentScale = transformRef.current.scale;
+ 486 | 
+ 487 |       if (direction === "out" && currentScale <= MIN_ZOOM_SCALE) {
+ 488 |         return;
+ 489 |       }
+ 490 | 
+ 491 |       const nextScale =
+ 492 |         direction === "in"
+ 493 |           ? Math.min(currentScale * ZOOM_STEP, ZOOM_MAX)
+ 494 |           : Math.max(currentScale / ZOOM_STEP, ZOOM_MIN);
+ 495 | 
+ 496 |       if (nextScale === currentScale) {
+ 497 |         return;
+ 498 |       }
+ 499 | 
+ 500 |       logChartInteractionEvent({
+ 501 |         interactionType: direction === "in" ? "ZOOM_IN" : "ZOOM_OUT",
+ 502 |         visualizationLibrary: "Pixi",
+ 503 |         interactionSource: interactionSource,
+ 504 |       });
+ 505 | 
+ 506 |       const plotCenterX = innerWidth / 2;
+ 507 |       const plotCenterY = innerHeight / 2;
+ 508 | 
+ 509 |       const nextTransformOffsetX =
+ 510 |         transformRef.current.x - plotCenterX * (nextScale / currentScale - 1);
+ 511 | 
+ 512 |       const nextTransformOffsetY =
+ 513 |         transformRef.current.y - plotCenterY * (nextScale / currentScale - 1);
+ 514 | 
+ 515 |       const clampedTransformOffset = clampPan(
+ 516 |         nextTransformOffsetX,
+ 517 |         nextTransformOffsetY,
+ 518 |         nextScale,
+ 519 |         innerWidth,
+ 520 |         innerHeight,
+ 521 |       );
+ 522 | 
+ 523 |       transformRef.current = {
+ 524 |         scale: nextScale,
+ 525 |         x: clampedTransformOffset.x,
+ 526 |         y: clampedTransformOffset.y,
+ 527 |       };
+ 528 | 
+ 529 |       updateChartViewport(chartId, {
+ 530 |         scale: nextScale,
+ 531 |         translateX: clampedTransformOffset.x,
+ 532 |         translateY: clampedTransformOffset.y,
+ 533 |       });
+ 534 | 
+ 535 |       setZoomLevel(nextScale);
+ 536 |       applyTransform();
+ 537 |     },
+ 538 |     [innerWidth, innerHeight, chartId, applyTransform],
+ 539 |   );
+ 540 | 
+ 541 |   /*
+ 542 |    * RESET
+ 543 |    */
+ 544 |   const reset = useCallback(
+ 545 |     (interactionSource) => {
+ 546 |       const computedSource =
+ 547 |         interactionSource && typeof interactionSource === "string"
+ 548 |           ? interactionSource
+ 549 |           : "button";
+ 550 | 
+ 551 |       logChartInteractionEvent({
+ 552 |         interactionType: "RESET",
+ 553 |         visualizationLibrary: "Pixi",
+ 554 |         interactionSource: computedSource,
+ 555 |       });
+ 556 | 
+ 557 |       transformRef.current = {
+ 558 |         scale: 1,
+ 559 |         x: 0,
+ 560 |         y: 0,
+ 561 |       };
+ 562 |       updateChartViewport(chartId, {
+ 563 |         scale: 1,
+ 564 |         translateX: 0,
+ 565 |         translateY: 0,
+ 566 |       });
+ 567 | 
+ 568 |       setZoomLevel(1);
+ 569 |       applyTransform();
+ 570 |     },
+ 571 |     [applyTransform, chartId],
+ 572 |   );
+ 573 | 
+ 574 |   /*
+ 575 |    * CANVAS INTERACTIONS
+ 576 |    */
+ 577 |   const onCanvasMouseDown = useCallback(
+ 578 |     (event) => {
+ 579 |       if (isPanMode) {
+ 580 |         if (transformRef.current.scale <= MIN_ZOOM_SCALE) {
+ 581 |           return;
+ 582 |         }
+ 583 |         logChartInteractionEvent({
+ 584 |           interactionType: "PAN",
+ 585 |           visualizationLibrary: "Pixi",
+ 586 |           interactionSource: "drag",
+ 587 |         });
+ 588 |         setIsDragging(true);
+ 589 |         // eslint-disable-next-line react-hooks/immutability
+ 590 |         const dragState = ensureDragRef();
+ 591 |         dragState.dragging = true;
+ 592 |         dragState.startX = event.clientX - transformRef.current.x;
+ 593 |         dragState.startY = event.clientY - transformRef.current.y;
+ 594 |       } else if (isZoomMode) {
+ 595 |         if (!containerRef.current) return;
+ 596 |         const rect = containerRef.current.getBoundingClientRect();
+ 597 |         const localX = event.clientX - rect.left - PLOT_MARGIN.left;
+ 598 |         const localY = event.clientY - rect.top - PLOT_MARGIN.top;
+ 599 | 
+ 600 |         if (
 ```
 
-### Chunk 4/5
+### Chunk 4/6
 
 ```jsx
- 601 |         );
- 602 | 
- 603 |         const brushStartX = Math.min(brushStartRef.current.x, localX);
- 604 |         const brushStartY = Math.min(brushStartRef.current.y, localY);
- 605 |         const brushWidth = Math.abs(localX - brushStartRef.current.x);
- 606 |         const brushHeight = Math.abs(localY - brushStartRef.current.y);
- 607 | 
- 608 |         drawBrushOverlay(
- 609 |           brushGraphicsRef.current,
- 610 |           brushStartX,
- 611 |           brushStartY,
- 612 |           brushWidth,
- 613 |           brushHeight,
- 614 |         );
- 615 |       }
- 616 |     },
- 617 |     [innerWidth, innerHeight, chartId, applyTransform],
- 618 |   );
- 619 | 
- 620 |   const onCanvasMouseUp = useCallback(
- 621 |     (event) => {
- 622 |       setIsDragging(false);
- 623 |       if (dragRef.current.dragging) {
- 624 |         dragRef.current.dragging = false;
- 625 |         updateChartViewport(chartId, {
- 626 |           scale: transformRef.current.scale,
- 627 |           translateX: transformRef.current.x,
- 628 |           translateY: transformRef.current.y,
- 629 |         });
- 630 |         return;
- 631 |       }
+ 601 |           localX >= 0 &&
+ 602 |           localX <= innerWidth &&
+ 603 |           localY >= 0 &&
+ 604 |           localY <= innerHeight
+ 605 |         ) {
+ 606 |           brushStartRef.current = { x: localX, y: localY };
+ 607 |         }
+ 608 |       }
+ 609 |     },
+ 610 |     [isPanMode, isZoomMode, innerWidth, innerHeight],
+ 611 |   );
+ 612 | 
+ 613 |   const onCanvasMouseMove = useCallback(
+ 614 |     (event) => {
+ 615 |       const dragState = ensureDragRef();
+ 616 |       if (dragState.dragging) {
+ 617 |         if (transformRef.current.scale <= MIN_ZOOM_SCALE) {
+ 618 |           dragState.dragging = false;
+ 619 |           setIsDragging(false);
+ 620 |           transformRef.current.x = 0;
+ 621 |           transformRef.current.y = 0;
+ 622 | 
+ 623 |           updateChartViewport(chartId, {
+ 624 |             scale: 1,
+ 625 |             translateX: 0,
+ 626 |             translateY: 0,
+ 627 |           });
+ 628 | 
+ 629 |           applyTransform();
+ 630 |           return;
+ 631 |         }
  632 | 
- 633 |       if (brushStartRef.current) {
- 634 |         if (!containerRef.current) return;
- 635 |         const rect = containerRef.current.getBoundingClientRect();
- 636 |         const localX = Math.max(
- 637 |           0,
- 638 |           Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left),
- 639 |         );
- 640 |         const localY = Math.max(
- 641 |           0,
- 642 |           Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top),
- 643 |         );
- 644 | 
- 645 |         const brushStartX = Math.min(brushStartRef.current.x, localX);
- 646 |         const brushStartY = Math.min(brushStartRef.current.y, localY);
- 647 |         const brushWidth = Math.abs(localX - brushStartRef.current.x);
- 648 |         const brushHeight = Math.abs(localY - brushStartRef.current.y);
- 649 | 
- 650 |         if (brushWidth >= 5 && brushHeight >= 5) {
- 651 |           logChartInteractionEvent({
- 652 |             interactionType: "ZOOM_IN",
- 653 |             visualizationLibrary: "Pixi",
- 654 |             interactionSource: "brush",
- 655 |           });
- 656 | 
- 657 |           const nextTransform = applyBrushZoom(
- 658 |             {
- 659 |               startX: brushStartX,
- 660 |               startY: brushStartY,
- 661 |               width: brushWidth,
- 662 |               height: brushHeight,
- 663 |             },
- 664 |             transformRef,
- 665 |             innerWidth,
- 666 |             innerHeight,
- 667 |           );
- 668 | 
- 669 |           transformRef.current = {
- 670 |             scale: nextTransform.scale,
- 671 |             x: nextTransform.x,
- 672 |             y: nextTransform.y,
- 673 |           };
- 674 | 
- 675 |           updateChartViewport(chartId, {
- 676 |             scale: nextTransform.scale,
- 677 |             translateX: nextTransform.x,
- 678 |             translateY: nextTransform.y,
- 679 |           });
- 680 | 
- 681 |           setZoomLevel(nextTransform.scale);
- 682 |           applyTransform();
- 683 |         }
+ 633 |         const nextX = event.clientX - dragState.startX;
+ 634 |         const nextY = event.clientY - dragState.startY;
+ 635 |         const clamped = clampPan(
+ 636 |           nextX,
+ 637 |           nextY,
+ 638 |           transformRef.current.scale,
+ 639 |           innerWidth,
+ 640 |           innerHeight,
+ 641 |         );
+ 642 | 
+ 643 |         transformRef.current.x = clamped.x;
+ 644 |         transformRef.current.y = clamped.y;
+ 645 | 
+ 646 |         updateChartViewport(chartId, {
+ 647 |           scale: transformRef.current.scale,
+ 648 |           translateX: clamped.x,
+ 649 |           translateY: clamped.y,
+ 650 |         });
+ 651 | 
+ 652 |         applyTransform();
+ 653 |         return;
+ 654 |       }
+ 655 | 
+ 656 |       if (brushStartRef.current) {
+ 657 |         if (!containerRef.current) return;
+ 658 |         const rect = containerRef.current.getBoundingClientRect();
+ 659 |         const localX = Math.max(
+ 660 |           0,
+ 661 |           Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left),
+ 662 |         );
+ 663 |         const localY = Math.max(
+ 664 |           0,
+ 665 |           Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top),
+ 666 |         );
+ 667 | 
+ 668 |         const brushStartX = Math.min(brushStartRef.current.x, localX);
+ 669 |         const brushStartY = Math.min(brushStartRef.current.y, localY);
+ 670 |         const brushWidth = Math.abs(localX - brushStartRef.current.x);
+ 671 |         const brushHeight = Math.abs(localY - brushStartRef.current.y);
+ 672 | 
+ 673 |         drawBrushOverlay(
+ 674 |           brushGraphicsRef.current,
+ 675 |           brushStartX,
+ 676 |           brushStartY,
+ 677 |           brushWidth,
+ 678 |           brushHeight,
+ 679 |         );
+ 680 |       }
+ 681 |     },
+ 682 |     [innerWidth, innerHeight, chartId, applyTransform],
+ 683 |   );
  684 | 
- 685 |         if (brushGraphicsRef.current) {
- 686 |           brushGraphicsRef.current.clear();
- 687 |         }
- 688 |         brushStartRef.current = null;
- 689 |       }
- 690 |     },
- 691 |     [innerWidth, innerHeight, chartId, applyTransform],
- 692 |   );
- 693 | 
- 694 |   /* Cancel in-progress brush when switching to pan mode */
- 695 |   useEffect(() => {
- 696 |     if (isPanMode) {
- 697 |       brushStartRef.current = null;
- 698 |       if (brushGraphicsRef.current) {
- 699 |         brushGraphicsRef.current.clear();
- 700 |       }
- 701 |     }
- 702 |   }, [isPanMode]);
+ 685 |   const onCanvasMouseUp = useCallback(
+ 686 |     (event) => {
+ 687 |       setIsDragging(false);
+ 688 |       const dragState = ensureDragRef();
+ 689 |       if (dragState.dragging) {
+ 690 |         dragState.dragging = false;
+ 691 | 
+ 692 |         if (transformRef.current.scale <= MIN_ZOOM_SCALE) {
+ 693 |           transformRef.current.scale = 1;
+ 694 |           transformRef.current.x = 0;
+ 695 |           transformRef.current.y = 0;
+ 696 |           setZoomLevel(1);
+ 697 | 
+ 698 |           updateChartViewport(chartId, {
+ 699 |             scale: 1,
+ 700 |             translateX: 0,
+ 701 |             translateY: 0,
+ 702 |           });
  703 | 
- 704 |   /*
- 705 |    * INITIALIZE PIXI
- 706 |    */
- 707 |   useEffect(() => {
- 708 |     let isComponentUnmounted = false;
- 709 |     let pixiApplicationInstance = null;
- 710 | 
- 711 |     if (!containerRef.current) return;
- 712 | 
- 713 |     initializePixiApp(containerRef.current, innerWidth, innerHeight)
- 714 |       .then(({ app, axesLayer, contentLayer, mask, brushGraphics }) => {
- 715 |         if (isComponentUnmounted) {
- 716 |           try {
- 717 |             app.destroy({ removeView: true });
- 718 |           } catch (err) {
- 719 |             console.error(
- 720 |               "Error destroying Pixi App during init cancellation:",
- 721 |               err,
- 722 |             );
- 723 |           }
- 724 |           return;
- 725 |         }
+ 704 |           applyTransform();
+ 705 |           return;
+ 706 |         }
+ 707 |         updateChartViewport(chartId, {
+ 708 |           scale: transformRef.current.scale,
+ 709 |           translateX: transformRef.current.x,
+ 710 |           translateY: transformRef.current.y,
+ 711 |         });
+ 712 |         return;
+ 713 |       }
+ 714 | 
+ 715 |       if (brushStartRef.current) {
+ 716 |         if (!containerRef.current) return;
+ 717 |         const rect = containerRef.current.getBoundingClientRect();
+ 718 |         const localX = Math.max(
+ 719 |           0,
+ 720 |           Math.min(innerWidth, event.clientX - rect.left - PLOT_MARGIN.left),
+ 721 |         );
+ 722 |         const localY = Math.max(
+ 723 |           0,
+ 724 |           Math.min(innerHeight, event.clientY - rect.top - PLOT_MARGIN.top),
+ 725 |         );
  726 | 
- 727 |         pixiAppRef.current = app;
- 728 |         axesLayerRef.current = axesLayer;
- 729 |         contentLayerRef.current = contentLayer;
- 730 |         maskRef.current = mask;
- 731 |         brushGraphicsRef.current = brushGraphics;
- 732 |         pixiApplicationInstance = app;
- 733 | 
- 734 |         renderScene().then(() => {
- 735 |           requestAnimationFrame(() => {
- 736 |             applyTransform();
+ 727 |         const brushStartX = Math.min(brushStartRef.current.x, localX);
+ 728 |         const brushStartY = Math.min(brushStartRef.current.y, localY);
+ 729 |         const brushWidth = Math.abs(localX - brushStartRef.current.x);
+ 730 |         const brushHeight = Math.abs(localY - brushStartRef.current.y);
+ 731 | 
+ 732 |         if (brushWidth >= 5 && brushHeight >= 5) {
+ 733 |           logChartInteractionEvent({
+ 734 |             interactionType: "ZOOM_IN",
+ 735 |             visualizationLibrary: "Pixi",
+ 736 |             interactionSource: "brush",
  737 |           });
- 738 |         });
- 739 |       })
- 740 |       .catch((err) => {
- 741 |         console.error("Failed to initialize Pixi:", err);
- 742 |       });
- 743 | 
- 744 |     return () => {
- 745 |       isComponentUnmounted = true;
- 746 |       if (pixiApplicationInstance) {
- 747 |         try {
- 748 |           pixiApplicationInstance.destroy({ removeView: true });
- 749 |         } catch (err) {
- 750 |           console.error("Error destroying Pixi App:", err);
- 751 |         }
- 752 |       }
- 753 |     };
- 754 |   }, [innerWidth, innerHeight, renderScene]);
- 755 | 
- 756 |   /*
- 757 |    * RERENDER DATA CHANGES
- 758 |    */
- 759 |   useEffect(() => {
- 760 |     if (!plotterPoints.length) return;
- 761 |     renderScene();
- 762 |   }, [plotterPoints, imageCount, xGap, yGap, renderScene]);
- 763 | 
- 764 |   /*
- 765 |    * ATTACH NON-PASSIVE WHEEL LISTENER
- 766 |    */
- 767 |   useEffect(() => {
- 768 |     const container = containerRef.current;
- 769 |     if (!container) return;
- 770 | 
- 771 |     const onCanvasWheelScroll = (event) => {
- 772 |       event.preventDefault();
- 773 |       if (event.deltaY > 0) {
- 774 |         zoom("out", "wheel");
- 775 |       } else {
- 776 |         zoom("in", "wheel");
- 777 |       }
- 778 |     };
- 779 | 
- 780 |     container.addEventListener("wheel", onCanvasWheelScroll, {
- 781 |       passive: false,
- 782 |     });
- 783 | 
- 784 |     return () => {
- 785 |       container.removeEventListener("wheel", onCanvasWheelScroll);
- 786 |     };
- 787 |   }, [zoom]);
- 788 | 
- 789 |   return (
- 790 |     <div style={{ position: "relative" }}>
- 791 |       <PlotterControls
- 792 |         zoomLevel={zoomLevel}
- 793 |         onZoomIn={() => zoom("in")}
- 794 |         onZoomOut={() => zoom("out")}
- 795 |         onReset={() => reset("button")}
- 796 |         interactionMode={interactionMode}
- 797 |         onModeChange={setInteractionMode}
- 798 |       />
- 799 | 
- 800 |       <div
+ 738 | 
+ 739 |           const nextTransform = applyBrushZoom(
+ 740 |             {
+ 741 |               startX: brushStartX,
+ 742 |               startY: brushStartY,
+ 743 |               width: brushWidth,
+ 744 |               height: brushHeight,
+ 745 |             },
+ 746 |             transformRef,
+ 747 |             innerWidth,
+ 748 |             innerHeight,
+ 749 |           );
+ 750 | 
+ 751 |           transformRef.current = {
+ 752 |             scale: nextTransform.scale,
+ 753 |             x: nextTransform.x,
+ 754 |             y: nextTransform.y,
+ 755 |           };
+ 756 | 
+ 757 |           updateChartViewport(chartId, {
+ 758 |             scale: nextTransform.scale,
+ 759 |             translateX: nextTransform.x,
+ 760 |             translateY: nextTransform.y,
+ 761 |           });
+ 762 | 
+ 763 |           setZoomLevel(nextTransform.scale);
+ 764 |           applyTransform();
+ 765 |         }
+ 766 | 
+ 767 |         if (brushGraphicsRef.current) {
+ 768 |           brushGraphicsRef.current.clear();
+ 769 |         }
+ 770 |         brushStartRef.current = null;
+ 771 |       }
+ 772 |     },
+ 773 |     [innerWidth, innerHeight, chartId, applyTransform],
+ 774 |   );
+ 775 | 
+ 776 |   /* Cancel in-progress brush when switching to pan mode */
+ 777 |   useEffect(() => {
+ 778 |     if (isPanMode) {
+ 779 |       brushStartRef.current = null;
+ 780 |       if (brushGraphicsRef.current) {
+ 781 |         brushGraphicsRef.current.clear();
+ 782 |       }
+ 783 |     }
+ 784 |   }, [isPanMode]);
+ 785 | 
+ 786 |   const ensureDragRef = () => {
+ 787 |     if (!dragRef.current) {
+ 788 |       dragRef.current = {
+ 789 |         dragging: false,
+ 790 |         startX: 0,
+ 791 |         startY: 0,
+ 792 |       };
+ 793 |     }
+ 794 | 
+ 795 |     return dragRef.current;
+ 796 |   };
+ 797 |   /*
+ 798 |    * INITIALIZE PIXI
+ 799 |    */
+ 800 |   useEffect(() => {
 ```
 
-### Chunk 5/5
+### Chunk 5/6
 
 ```jsx
- 801 |         ref={containerRef}
- 802 |         onMouseDown={onCanvasMouseDown}
- 803 |         onMouseMove={onCanvasMouseMove}
- 804 |         onMouseUp={onCanvasMouseUp}
- 805 |         onMouseLeave={onCanvasMouseUp}
- 806 |         onDoubleClick={() => reset("double_click")}
- 807 |         style={{
- 808 |           cursor: isPanMode ? (isDragging ? "grabbing" : "grab") : "crosshair",
- 809 |         }}
- 810 |       />
- 811 | 
- 812 |       <div
- 813 |         ref={tooltipRef}
- 814 |         className="plotter-tooltip"
- 815 |         style={{
- 816 |           display: "none",
- 817 |           position: "absolute",
- 818 |           pointerEvents: "none",
- 819 |         }}
- 820 |       />
- 821 |     </div>
- 822 |   );
- 823 | }
- 824 | 
- 825 | /*
- 826 |  * GRID
- 827 |  */
- 828 | function drawGrid(layer, scaleX, scaleY, width, height) {
- 829 |   const grid = new Graphics();
- 830 | 
- 831 |   const xTicks = buildIntegerTicks(scaleX.domain());
- 832 |   const yTicks = buildIntegerTicks(scaleY.domain());
- 833 | 
- 834 |   xTicks.forEach((tick) => {
- 835 |     const x = scaleX(tick);
- 836 |     grid.moveTo(x, 0);
- 837 |     grid.lineTo(x, height);
- 838 |   });
- 839 | 
- 840 |   yTicks.forEach((tick) => {
- 841 |     const y = scaleY(tick);
- 842 |     grid.moveTo(0, y);
- 843 |     grid.lineTo(width, y);
- 844 |   });
- 845 | 
- 846 |   grid.stroke({
- 847 |     width: 1,
- 848 |     color: GRID_COLOR,
- 849 |     alpha: GRID_ALPHA,
- 850 |   });
- 851 | 
- 852 |   const border = new Graphics();
- 853 |   border.rect(0, 0, width, height);
- 854 |   border.stroke({
- 855 |     width: 1,
- 856 |     color: AXIS_BORDER_COLOR,
- 857 |   });
- 858 | 
- 859 |   layer.addChild(grid);
- 860 |   layer.addChild(border);
- 861 | }
- 862 | 
- 863 | /*
- 864 |  * LABELS
- 865 |  */
- 866 | function drawAxesLabels(layer, scaleX, scaleY, innerWidth, innerHeight) {
- 867 |   const xTicks = buildIntegerTicks(scaleX.domain());
- 868 |   const yTicks = buildIntegerTicks(scaleY.domain());
- 869 | 
- 870 |   xTicks.forEach((tick) => {
- 871 |     const label = new PixiText({
- 872 |       text: tick.toString(),
- 873 |       style: {
- 874 |         fill: TICK_COLOR,
- 875 |         fontSize: 11,
- 876 |       },
- 877 |     });
- 878 | 
- 879 |     label.x = scaleX(tick) - label.width / 2;
- 880 |     label.y = innerHeight + 6;
- 881 |     layer.addChild(label);
- 882 |   });
- 883 | 
- 884 |   yTicks.forEach((tick) => {
- 885 |     const label = new PixiText({
- 886 |       text: tick.toString(),
- 887 |       style: {
- 888 |         fill: TICK_COLOR,
- 889 |         fontSize: 11,
- 890 |       },
- 891 |     });
- 892 | 
- 893 |     label.x = -label.width - 6;
- 894 |     label.y = scaleY(tick) - label.height / 2;
- 895 |     layer.addChild(label);
- 896 |   });
- 897 | }
+ 801 |     let isComponentUnmounted = false;
+ 802 | 
+ 803 |     if (!containerRef.current) return;
+ 804 | 
+ 805 |     initializePixiApp(containerRef.current, innerWidth, innerHeight)
+ 806 |       .then(({ app, axesLayer, contentLayer, mask, brushGraphics }) => {
+ 807 |         if (isComponentUnmounted) {
+ 808 |           try {
+ 809 |             app.destroy(true, {
+ 810 |               children: true,
+ 811 |               texture: false,
+ 812 |               textureSource: false,
+ 813 |             });
+ 814 |           } catch (err) {
+ 815 |             console.error(
+ 816 |               "Error destroying Pixi App during init cancellation:",
+ 817 |               err,
+ 818 |             );
+ 819 |           }
+ 820 |           return;
+ 821 |         }
+ 822 | 
+ 823 |         pixiAppRef.current = app;
+ 824 |         axesLayerRef.current = axesLayer;
+ 825 |         contentLayerRef.current = contentLayer;
+ 826 |         maskRef.current = mask;
+ 827 |         brushGraphicsRef.current = brushGraphics;
+ 828 | 
+ 829 |         renderScene().then(() => {
+ 830 |           if (isComponentUnmounted) return;
+ 831 | 
+ 832 |           renderFrameRef.current = requestAnimationFrame(() => {
+ 833 |             if (!isComponentUnmounted) {
+ 834 |               applyTransform();
+ 835 |             }
+ 836 |           });
+ 837 |         });
+ 838 |       })
+ 839 |       .catch((err) => {
+ 840 |         if (!isComponentUnmounted) {
+ 841 |           console.error("Failed to initialize Pixi:", err);
+ 842 |         }
+ 843 |       });
+ 844 | 
+ 845 |     return () => {
+ 846 |       isComponentUnmounted = true;
+ 847 | 
+ 848 |       /**
+ 849 |        * Persist lightweight interaction state.
+ 850 |        * Do this before destroying Pixi objects.
+ 851 |        */
+ 852 |       if (chartId && transformRef.current) {
+ 853 |         updateChartViewport(chartId, {
+ 854 |           scale: transformRef.current.scale,
+ 855 |           translateX: transformRef.current.x,
+ 856 |           translateY: transformRef.current.y,
+ 857 |         });
+ 858 |       }
+ 859 | 
+ 860 |       try {
+ 861 |         if (renderFrameRef.current) {
+ 862 |           cancelAnimationFrame(renderFrameRef.current);
+ 863 |           renderFrameRef.current = null;
+ 864 |         }
+ 865 | 
+ 866 |         brushStartRef.current = null;
+ 867 |         dragRef.current = {
+ 868 |           dragging: false,
+ 869 |           startX: 0,
+ 870 |           startY: 0,
+ 871 |         };
+ 872 | 
+ 873 |         baseScalesRef.current = {
+ 874 |           xScale: null,
+ 875 |           yScale: null,
+ 876 |         };
+ 877 | 
+ 878 |         brushGraphicsRef.current?.clear?.();
+ 879 |         brushGraphicsRef.current?.destroy?.({
+ 880 |           children: true,
+ 881 |           texture: false,
+ 882 |           textureSource: false,
+ 883 |         });
+ 884 | 
+ 885 |         axesLayerRef.current?.removeChildren?.();
+ 886 |         axesLayerRef.current?.destroy?.({
+ 887 |           children: true,
+ 888 |           texture: false,
+ 889 |           textureSource: false,
+ 890 |         });
+ 891 | 
+ 892 |         contentLayerRef.current?.removeChildren?.();
+ 893 |         contentLayerRef.current?.destroy?.({
+ 894 |           children: true,
+ 895 |           texture: false,
+ 896 |           textureSource: false,
+ 897 |         });
  898 | 
- 899 | /*
- 900 |  * POINTS
- 901 |  */
- 902 | function drawPoints(
- 903 |   layer,
- 904 |   points,
- 905 |   scaleX,
- 906 |   scaleY,
- 907 |   imageCount,
- 908 |   tooltipRef,
- 909 |   cellSize = CELL_SIZE,
- 910 | ) {
- 911 |   points.forEach((point) => {
- 912 |     const x = scaleX(point.scaledX);
- 913 |     const y = scaleY(point.scaledY);
- 914 | 
- 915 |     const positions = computeImagePositions(
- 916 |       x,
- 917 |       y,
- 918 |       cellSize,
- 919 |       cellSize,
- 920 |       imageCount,
- 921 |     );
- 922 | 
- 923 |     positions.forEach((position) => {
- 924 |       const sprite = Sprite.from(point.image);
- 925 |       sprite.x = position.x;
- 926 |       sprite.y = position.y;
- 927 |       sprite.width = position.width;
- 928 |       sprite.height = position.height;
- 929 |       sprite.eventMode = "static";
- 930 |       sprite.cursor = "pointer";
- 931 | 
- 932 |       sprite.on("pointerenter", (event) => {
- 933 |         showTooltip(tooltipRef.current, event, point);
- 934 |       });
- 935 | 
- 936 |       sprite.on("pointerleave", () => {
- 937 |         hideTooltip(tooltipRef.current);
- 938 |       });
- 939 | 
- 940 |       layer.addChild(sprite);
- 941 |     });
- 942 |   });
- 943 | }
+ 899 |         maskRef.current?.clear?.();
+ 900 |         maskRef.current?.destroy?.({
+ 901 |           children: true,
+ 902 |           texture: false,
+ 903 |           textureSource: false,
+ 904 |         });
+ 905 | 
+ 906 |         pixiAppRef.current?.destroy?.(true, {
+ 907 |           children: true,
+ 908 |           texture: false,
+ 909 |           textureSource: false,
+ 910 |         });
+ 911 | 
+ 912 |         if (containerRef.current) {
+ 913 |           // eslint-disable-next-line react-hooks/exhaustive-deps
+ 914 |           containerRef.current.replaceChildren();
+ 915 |         }
+ 916 | 
+ 917 |         pixiAppRef.current = null;
+ 918 |         axesLayerRef.current = null;
+ 919 |         contentLayerRef.current = null;
+ 920 |         maskRef.current = null;
+ 921 |         brushGraphicsRef.current = null;
+ 922 |         tooltipRef.current = null;
+ 923 |         loadedImageUrlsRef.current = [];
+ 924 |       } catch (error) {
+ 925 |         console.warn("Pixi cleanup failed", error);
+ 926 |       }
+ 927 |     };
+ 928 |   }, [innerWidth, innerHeight, renderScene, applyTransform, chartId]);
+ 929 | 
+ 930 |   /*
+ 931 |    * RERENDER DATA CHANGES
+ 932 |    */
+ 933 |   useEffect(() => {
+ 934 |     if (!plotterPoints.length) return;
+ 935 |     renderScene();
+ 936 |   }, [plotterPoints, imageCount, xGap, yGap, renderScene]);
+ 937 | 
+ 938 |   /*
+ 939 |    * ATTACH NON-PASSIVE WHEEL LISTENER
+ 940 |    */
+ 941 |   useEffect(() => {
+ 942 |     const container = containerRef.current;
+ 943 |     if (!container) return;
  944 | 
- 945 | /*
- 946 |  * SMART TICKS
- 947 |  */
- 948 | function buildIntegerTicks([min, max]) {
- 949 |   const range = max - min;
- 950 |   let step;
- 951 | 
- 952 |   if (range <= 10) step = 1;
- 953 |   else if (range <= 20) step = 2;
- 954 |   else if (range <= 50) step = 5;
- 955 |   else if (range <= 100) step = 10;
- 956 |   else if (range <= 200) step = 20;
- 957 |   else step = 50;
- 958 | 
- 959 |   const ticks = [];
- 960 |   const start = Math.floor(min / step) * step;
- 961 | 
- 962 |   for (let value = start; value <= max; value += step) {
- 963 |     ticks.push(Number(value.toFixed(2)));
- 964 |   }
- 965 | 
- 966 |   return ticks;
- 967 | }
- 968 | 
- 969 | /*
- 970 |  * TOOLTIP
- 971 |  */
- 972 | function showTooltip(element, event, point) {
- 973 |   if (!element) return;
- 974 | 
- 975 |   const global = event.global;
- 976 |   element.style.display = "block";
- 977 |   element.style.left = `${global.x + 15}px`;
- 978 |   element.style.top = `${global.y - 10}px`;
- 979 | 
- 980 |   element.innerHTML = `
- 981 |     <div class="tooltip-label">
- 982 |       ${point.label}
- 983 |     </div>
- 984 |  
- 985 |     <div class="tooltip-meta">
- 986 |       <span>Interval: ${point.meta.interval}s</span>
- 987 |       <span>Angle: ${point.meta.angle}°</span>
- 988 |       <span>Quality: ${point.meta.quality}</span>
- 989 |     </div>
- 990 |   `;
- 991 | }
+ 945 |     const onCanvasWheelScroll = (event) => {
+ 946 |       event.preventDefault();
+ 947 | 
+ 948 |       const isZoomOut = event.deltaY > 0;
+ 949 | 
+ 950 |       if (isZoomOut && transformRef.current.scale <= MIN_ZOOM_SCALE) {
+ 951 |         return;
+ 952 |       }
+ 953 | 
+ 954 |       if (isZoomOut) {
+ 955 |         zoom("out", "wheel");
+ 956 |       } else {
+ 957 |         zoom("in", "wheel");
+ 958 |       }
+ 959 |     };
+ 960 | 
+ 961 |     container.addEventListener("wheel", onCanvasWheelScroll, {
+ 962 |       passive: false,
+ 963 |     });
+ 964 | 
+ 965 |     return () => {
+ 966 |       container.removeEventListener("wheel", onCanvasWheelScroll);
+ 967 |     };
+ 968 |   }, [zoom]);
+ 969 | 
+ 970 |   return (
+ 971 |     <div style={{ position: "relative" }}>
+ 972 |       <PlotterControls
+ 973 |         zoomLevel={zoomLevel}
+ 974 |         onZoomIn={() => zoom("in")}
+ 975 |         onZoomOut={() => zoom("out")}
+ 976 |         onReset={() => reset("button")}
+ 977 |         interactionMode={interactionMode}
+ 978 |         onModeChange={setInteractionMode}
+ 979 |       />
+ 980 | 
+ 981 |       <div
+ 982 |         ref={containerRef}
+ 983 |         onMouseDown={onCanvasMouseDown}
+ 984 |         onMouseMove={onCanvasMouseMove}
+ 985 |         onMouseUp={onCanvasMouseUp}
+ 986 |         onMouseLeave={onCanvasMouseUp}
+ 987 |         onDoubleClick={() => reset("double_click")}
+ 988 |         style={{
+ 989 |           cursor: isPanMode ? (isDragging ? "grabbing" : "grab") : "crosshair",
+ 990 |         }}
+ 991 |       />
  992 | 
- 993 | function hideTooltip(element) {
- 994 |   if (!element) return;
- 995 |   element.style.display = "none";
- 996 | }
- 997 | 
- 998 | export default PixiPlotter;
- 999 | 
+ 993 |       <div
+ 994 |         ref={tooltipRef}
+ 995 |         className="plotter-tooltip"
+ 996 |         style={{
+ 997 |           display: "none",
+ 998 |           position: "absolute",
+ 999 |           pointerEvents: "none",
+1000 |         }}
+```
+
+### Chunk 6/6
+
+```jsx
+1001 |       />
+1002 |     </div>
+1003 |   );
+1004 | }
+1005 | 
+1006 | /*
+1007 |  * GRID
+1008 |  */
+1009 | function drawGrid(layer, scaleX, scaleY, width, height) {
+1010 |   const grid = new Graphics();
+1011 | 
+1012 |   const xTicks = buildIntegerTicks(scaleX.domain());
+1013 |   const yTicks = buildIntegerTicks(scaleY.domain());
+1014 | 
+1015 |   xTicks.forEach((tick) => {
+1016 |     const x = scaleX(tick);
+1017 |     grid.moveTo(x, 0);
+1018 |     grid.lineTo(x, height);
+1019 |   });
+1020 | 
+1021 |   yTicks.forEach((tick) => {
+1022 |     const y = scaleY(tick);
+1023 |     grid.moveTo(0, y);
+1024 |     grid.lineTo(width, y);
+1025 |   });
+1026 | 
+1027 |   grid.stroke({
+1028 |     width: 1,
+1029 |     color: GRID_COLOR,
+1030 |     alpha: GRID_ALPHA,
+1031 |   });
+1032 | 
+1033 |   const border = new Graphics();
+1034 |   border.rect(0, 0, width, height);
+1035 |   border.stroke({
+1036 |     width: 1,
+1037 |     color: AXIS_BORDER_COLOR,
+1038 |   });
+1039 | 
+1040 |   layer.addChild(grid);
+1041 |   layer.addChild(border);
+1042 | }
+1043 | 
+1044 | /*
+1045 |  * LABELS
+1046 |  */
+1047 | function drawAxesLabels(layer, scaleX, scaleY, innerWidth, innerHeight) {
+1048 |   const xTicks = buildIntegerTicks(scaleX.domain());
+1049 |   const yTicks = buildIntegerTicks(scaleY.domain());
+1050 | 
+1051 |   xTicks.forEach((tick) => {
+1052 |     const label = new PixiText({
+1053 |       text: tick.toString(),
+1054 |       style: {
+1055 |         fill: TICK_COLOR,
+1056 |         fontSize: 11,
+1057 |       },
+1058 |     });
+1059 | 
+1060 |     label.x = scaleX(tick) - label.width / 2;
+1061 |     label.y = innerHeight + 6;
+1062 |     layer.addChild(label);
+1063 |   });
+1064 | 
+1065 |   yTicks.forEach((tick) => {
+1066 |     const label = new PixiText({
+1067 |       text: tick.toString(),
+1068 |       style: {
+1069 |         fill: TICK_COLOR,
+1070 |         fontSize: 11,
+1071 |       },
+1072 |     });
+1073 | 
+1074 |     label.x = -label.width - 6;
+1075 |     label.y = scaleY(tick) - label.height / 2;
+1076 |     layer.addChild(label);
+1077 |   });
+1078 | }
+1079 | 
+1080 | /*
+1081 |  * POINTS
+1082 |  */
+1083 | function drawPoints(
+1084 |   layer,
+1085 |   points,
+1086 |   scaleX,
+1087 |   scaleY,
+1088 |   imageCount,
+1089 |   tooltipRef,
+1090 |   cellSize = CELL_SIZE,
+1091 | ) {
+1092 |   points.forEach((point) => {
+1093 |     const x = scaleX(point.scaledX);
+1094 |     const y = scaleY(point.scaledY);
+1095 | 
+1096 |     const positions = computeImagePositions(
+1097 |       x,
+1098 |       y,
+1099 |       cellSize,
+1100 |       cellSize,
+1101 |       imageCount,
+1102 |     );
+1103 | 
+1104 |     positions.forEach((position) => {
+1105 |       const sprite = Sprite.from(point.image);
+1106 |       sprite.x = position.x;
+1107 |       sprite.y = position.y;
+1108 |       sprite.width = position.width;
+1109 |       sprite.height = position.height;
+1110 |       sprite.eventMode = "static";
+1111 |       sprite.cursor = "pointer";
+1112 | 
+1113 |       sprite.on("pointerenter", (event) => {
+1114 |         showTooltip(tooltipRef.current, event, point);
+1115 |       });
+1116 | 
+1117 |       sprite.on("pointerleave", () => {
+1118 |         hideTooltip(tooltipRef.current);
+1119 |       });
+1120 | 
+1121 |       layer.addChild(sprite);
+1122 |     });
+1123 |   });
+1124 | }
+1125 | 
+1126 | /*
+1127 |  * SMART TICKS
+1128 |  */
+1129 | function buildIntegerTicks([min, max]) {
+1130 |   const range = max - min;
+1131 |   let step;
+1132 | 
+1133 |   if (range <= 10) step = 1;
+1134 |   else if (range <= 20) step = 2;
+1135 |   else if (range <= 50) step = 5;
+1136 |   else if (range <= 100) step = 10;
+1137 |   else if (range <= 200) step = 20;
+1138 |   else step = 50;
+1139 | 
+1140 |   const ticks = [];
+1141 |   const start = Math.floor(min / step) * step;
+1142 | 
+1143 |   for (let value = start; value <= max; value += step) {
+1144 |     ticks.push(Number(value.toFixed(2)));
+1145 |   }
+1146 | 
+1147 |   return ticks;
+1148 | }
+1149 | 
+1150 | /*
+1151 |  * TOOLTIP
+1152 |  */
+1153 | function showTooltip(element, event, point) {
+1154 |   if (!element) return;
+1155 | 
+1156 |   const global = event.global;
+1157 |   element.style.display = "block";
+1158 |   element.style.left = `${global.x + 15}px`;
+1159 |   element.style.top = `${global.y - 10}px`;
+1160 | 
+1161 |   element.innerHTML = `
+1162 |     <div class="tooltip-label">
+1163 |       ${point.label}
+1164 |     </div>
+1165 |  
+1166 |     <div class="tooltip-meta">
+1167 |       <span>Interval: ${point.meta.interval}s</span>
+1168 |       <span>Angle: ${point.meta.angle}°</span>
+1169 |       <span>Quality: ${point.meta.quality}</span>
+1170 |     </div>
+1171 |   `;
+1172 | }
+1173 | 
+1174 | function hideTooltip(element) {
+1175 |   if (!element) return;
+1176 |   element.style.display = "none";
+1177 | }
+1178 | 
+1179 | export default PixiPlotter;
+1180 | 
 ```
 
 
@@ -4921,961 +5779,1246 @@ imagdPlotting
 ---
 
 ## 📄 src\components\RechartsPlotter.jsx
-**hash:** `3551e4f6`
+**hash:** `2b4754e3`
 
-### Chunk 1/5
+### Chunk 1/7
 
 ```jsx
-   1 | /* eslint-disable react-hooks/purity */
-   2 | import { useState, useMemo, useRef, useEffect, useCallback, memo } from "react";
-   3 | import * as d3 from "d3";
-   4 | import { usePlotterData } from "../lib/plotterData";
-   5 | import { computeImagePositions } from "../lib/gridLayout";
-   6 | import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
-   7 | import {
-   8 |   computeAdaptiveCellSize,
-   9 |   filterVisiblePoints,
-  10 |   computeEffectiveImageCount,
-  11 | } from "../lib/densityLayout";
-  12 | import PlotterControls from "./PlotterControls";
-  13 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
-  14 | import { useInteractionMode } from "../lib/interactionMode";
-  15 | import {
-  16 |   getChartViewport,
-  17 |   updateChartViewport,
-  18 | } from "../lib/chartViewportStore";
-  19 | 
-  20 | const ZOOM_STEP = 1.5;
-  21 | const ZOOM_MIN = 0.35;
-  22 | const ZOOM_MAX = 250;
-  23 | const BRUSH_MIN_PIXELS = 5;
-  24 | const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
-  25 | const BRUSH_STROKE = "#4493ff";
-  26 | const BRUSH_STROKE_WIDTH = 1.5;
-  27 | 
-  28 | const BASE_IMAGE_GAP_X = 10;
-  29 | const BASE_IMAGE_GAP_Y = 10;
-  30 | 
-  31 | const TooltipOverlay = memo(function TooltipOverlay({
-  32 |   hoveredPoint,
-  33 |   tooltipRef,
-  34 | }) {
-  35 |   if (!hoveredPoint) return null;
-  36 | 
-  37 |   return (
-  38 |     <div
-  39 |       ref={tooltipRef}
-  40 |       style={{
-  41 |         position: "fixed",
-  42 |         left: 0,
-  43 |         top: 0,
-  44 |         background: "#111",
-  45 |         border: "1px solid #333",
-  46 |         padding: "10px",
-  47 |         borderRadius: "8px",
-  48 |         color: "white",
-  49 |         fontSize: "12px",
-  50 |         pointerEvents: "none",
-  51 |         zIndex: 1000,
-  52 |       }}
-  53 |     >
-  54 |       <div>{hoveredPoint.label}</div>
-  55 |       <div>X: {hoveredPoint.x}</div>
-  56 |       <div>Y: {hoveredPoint.y}</div>
-  57 |     </div>
-  58 |   );
-  59 | });
-  60 | 
-  61 | function RechartsPlotter({ chartId, imageCount, xGap, yGap, syntheticPoints }) {
-  62 |   const {
-  63 |     plotterPoints: fetchedPoints,
-  64 |     isLoading,
-  65 |     loadError,
-  66 |   } = usePlotterData();
-  67 | 
-  68 |   const plotterPoints = syntheticPoints || fetchedPoints;
-  69 | 
-  70 |   if (!syntheticPoints && isLoading)
-  71 |     return <div className="plotter-loading">Loading data…</div>;
-  72 |   if (!syntheticPoints && loadError)
-  73 |     return <div className="plotter-error">Error: {loadError}</div>;
-  74 | 
-  75 |   return (
-  76 |     <RechartsCanvas
-  77 |       plotterPoints={plotterPoints}
-  78 |       imageCount={imageCount}
-  79 |       xGap={xGap}
-  80 |       yGap={yGap}
-  81 |       chartId={chartId}
-  82 |     />
-  83 |   );
-  84 | }
-  85 | 
-  86 | const ControlsLayer = memo(function ControlsLayer({
-  87 |   zoomLevel,
-  88 |   onZoomIn,
-  89 |   onZoomOut,
-  90 |   onReset,
-  91 |   interactionMode,
-  92 |   onModeChange,
-  93 | }) {
-  94 |   return (
-  95 |     <div style={{ position: "absolute", top: 0, left: 0, zIndex: 10 }}>
-  96 |       <PlotterControls
-  97 |         zoomLevel={zoomLevel}
-  98 |         onZoomIn={onZoomIn}
-  99 |         onZoomOut={onZoomOut}
- 100 |         onReset={onReset}
- 101 |         interactionMode={interactionMode}
- 102 |         onModeChange={onModeChange}
- 103 |       />
- 104 |     </div>
- 105 |   );
- 106 | });
+   1 | /* eslint-disable react-hooks/set-state-in-effect */
+   2 | /* eslint-disable react-hooks/refs */
+   3 | import {
+   4 |   useState,
+   5 |   useMemo,
+   6 |   useRef,
+   7 |   useEffect,
+   8 |   useCallback,
+   9 |   memo,
+  10 |   useLayoutEffect,
+  11 | } from "react";
+  12 | import * as d3 from "d3";
+  13 | import { usePlotterData } from "../lib/plotterData";
+  14 | import {
+  15 |   PLOT_DIMENSIONS,
+  16 |   PLOT_MARGIN,
+  17 |   DATA_POINT_LIMITS,
+  18 | } from "../lib/constants";
+  19 | import {
+  20 |   computeAdaptiveCellSize,
+  21 |   computeEffectiveImageCount,
+  22 | } from "../lib/densityLayout";
+  23 | import PlotterControls from "./PlotterControls";
+  24 | import ImageCanvasLayer from "./ImageCanvasLayer";
+  25 | import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+  26 | import { useInteractionMode } from "../lib/interactionMode";
+  27 | import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
+  28 | import {
+  29 |   getChartViewport,
+  30 |   updateChartViewport,
+  31 | } from "../lib/chartViewportStore";
+  32 | import { buildQuadtree, queryVisiblePointsQuadtree } from "../lib/quadtree";
+  33 | import { useThrottledCallback } from "../lib/debouncedHooks";
+  34 | 
+  35 | const ZOOM_STEP = 1.5;
+  36 | const ZOOM_MIN = 1;
+  37 | const MIN_ZOOM_SCALE = 1.001;
+  38 | const ZOOM_MAX = 250;
+  39 | const BRUSH_MIN_PIXELS = 5;
+  40 | const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
+  41 | const BRUSH_STROKE = "#4493ff";
+  42 | const BRUSH_STROKE_WIDTH = 1.5;
+  43 | 
+  44 | const BASE_IMAGE_GAP_X = 10;
+  45 | const BASE_IMAGE_GAP_Y = 10;
+  46 | 
+  47 | const TooltipOverlay = memo(function TooltipOverlay({
+  48 |   hoveredPoint,
+  49 |   tooltipRef,
+  50 |   position,
+  51 | }) {
+  52 |   if (!hoveredPoint) return null;
+  53 | 
+  54 |   return (
+  55 |     <div
+  56 |       ref={tooltipRef}
+  57 |       style={{
+  58 |         position: "fixed",
+  59 |         left: `${position?.x ?? 0}px`,
+  60 |         top: `${position?.y ?? 0}px`,
+  61 |         background: "#111",
+  62 |         border: "1px solid #333",
+  63 |         padding: "10px",
+  64 |         borderRadius: "8px",
+  65 |         color: "white",
+  66 |         fontSize: "12px",
+  67 |         pointerEvents: "none",
+  68 |         zIndex: 1000,
+  69 |       }}
+  70 |     >
+  71 |       <div>{hoveredPoint.label}</div>
+  72 |       <div>X: {hoveredPoint.x}</div>
+  73 |       <div>Y: {hoveredPoint.y}</div>
+  74 |     </div>
+  75 |   );
+  76 | });
+  77 | 
+  78 | function createInitialDragState() {
+  79 |   return {
+  80 |     dragging: false,
+  81 |     pointerId: null,
+  82 |     startClientX: 0,
+  83 |     startClientY: 0,
+  84 |     startTransform: {
+  85 |       scale: 1,
+  86 |       x: 0,
+  87 |       y: 0,
+  88 |     },
+  89 |   };
+  90 | }
+  91 | 
+  92 | function SvgImageLayer({
+  93 |   points,
+  94 |   baseXScale,
+  95 |   baseYScale,
+  96 |   cellSize,
+  97 |   transform,
+  98 |   imageCount,
+  99 | }) {
+ 100 |   return (
+ 101 |     <g
+ 102 |       transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}
+ 103 |     >
+ 104 |       {points.flatMap((point) => {
+ 105 |         const x = baseXScale(point.scaledX);
+ 106 |         const y = baseYScale(point.scaledY);
  107 | 
- 108 | function RechartsCanvas({ plotterPoints, imageCount, xGap, yGap, chartId }) {
- 109 |   const containerRef = useRef(null);
- 110 |   const svgRef = useRef(null);
- 111 |   const dragRef = useRef({
- 112 |     dragging: false,
- 113 |     pointerId: null,
- 114 |     startClientX: 0,
- 115 |     startClientY: 0,
- 116 |     startTransform: { scale: 1, x: 0, y: 0 },
- 117 |   });
- 118 | 
- 119 |   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
- 120 |   const initialViewportRef = useRef(getChartViewport(chartId));
- 121 |   // eslint-disable-next-line react-hooks/refs
- 122 |   const [transform, setTransform] = useState(() => ({
- 123 |     scale: initialViewportRef.current.scale || 1,
- 124 |     x: initialViewportRef.current.translateX || 0,
- 125 |     y: initialViewportRef.current.translateY || 0,
- 126 |   }));
- 127 |   const [hoveredPoint, setHoveredPoint] = useState(null);
- 128 |   const tooltipRef = useRef(null);
- 129 |   const [brushRect, setBrushRect] = useState(null);
- 130 |   const [isDragging, setIsDragging] = useState(false);
- 131 |   const brushStartRef = useRef(null);
- 132 | 
- 133 |   const { interactionMode, setInteractionMode, isPanMode } =
- 134 |     useInteractionMode();
- 135 | 
- 136 |   useEffect(() => {
- 137 |     if (!containerRef.current) return;
- 138 | 
- 139 |     const observer = new ResizeObserver((entries) => {
- 140 |       const entry = entries[0];
- 141 |       if (entry) setContainerWidth(entry.contentRect.width);
- 142 |     });
- 143 | 
- 144 |     observer.observe(containerRef.current);
- 145 |     return () => observer.disconnect();
- 146 |   }, []);
- 147 | 
- 148 |   /* Cancel in-progress brush when switching to pan mode */
- 149 |   useEffect(() => {
- 150 |     if (isPanMode) {
- 151 |       brushStartRef.current = null;
- 152 |       // eslint-disable-next-line react-hooks/set-state-in-effect
- 153 |       setBrushRect(null);
- 154 |     }
- 155 |   }, [isPanMode]);
- 156 | 
- 157 |   useEffect(() => {
- 158 |     updateChartViewport(chartId, {
- 159 |       scale: transform.scale,
- 160 |       translateX: transform.x,
- 161 |       translateY: transform.y,
- 162 |     });
- 163 |   }, [chartId, transform]);
- 164 | 
- 165 |   useEffect(() => {
- 166 |     const saved = getChartViewport(chartId);
- 167 | 
- 168 |     setTransform({
- 169 |       scale: saved?.scale ?? 1,
- 170 |       x: saved?.translateX ?? 0,
- 171 |       y: saved?.translateY ?? 0,
- 172 |     });
- 173 |   }, [chartId]);
+ 108 |         return Array.from({ length: imageCount }).map((_, i) => {
+ 109 |           const offsetX = (i % 3) * (cellSize * 0.3);
+ 110 |           const offsetY = Math.floor(i / 3) * (cellSize * 0.3);
+ 111 | 
+ 112 |           return (
+ 113 |             <image
+ 114 |               key={`${point.id}-${i}`}
+ 115 |               href={point.image}
+ 116 |               x={x - cellSize / 2 + offsetX}
+ 117 |               y={y - cellSize / 2 + offsetY}
+ 118 |               width={cellSize}
+ 119 |               height={cellSize}
+ 120 |               data-point-id={point.id}
+ 121 |             />
+ 122 |           );
+ 123 |         });
+ 124 |       })}
+ 125 |     </g>
+ 126 |   );
+ 127 | }
+ 128 | 
+ 129 | function RechartsPlotter({
+ 130 |   enableQuadtree,
+ 131 |   enableLOD,
+ 132 |   enableCanvas,
+ 133 |   chartId,
+ 134 |   imageCount,
+ 135 |   xGap,
+ 136 |   yGap,
+ 137 |   dataPointCount,
+ 138 | }) {
+ 139 |   const {
+ 140 |     plotterPoints: fetchedPoints,
+ 141 |     isLoading,
+ 142 |     loadError,
+ 143 |   } = usePlotterData();
+ 144 | 
+ 145 |   const syntheticPoints = useMemo(() => {
+ 146 |     return generateSyntheticPoints(
+ 147 |       Math.max(
+ 148 |         DATA_POINT_LIMITS.min,
+ 149 |         Math.min(dataPointCount, DATA_POINT_LIMITS.max),
+ 150 |       ),
+ 151 |     );
+ 152 |   }, [dataPointCount]);
+ 153 | 
+ 154 |   const plotterPoints = syntheticPoints || fetchedPoints;
+ 155 | 
+ 156 |   if (!syntheticPoints && isLoading)
+ 157 |     return <div className="plotter-loading">Loading data…</div>;
+ 158 |   if (!syntheticPoints && loadError)
+ 159 |     return <div className="plotter-error">Error: {loadError}</div>;
+ 160 | 
+ 161 |   return (
+ 162 |     <RechartsCanvas
+ 163 |       plotterPoints={plotterPoints}
+ 164 |       imageCount={imageCount}
+ 165 |       xGap={xGap}
+ 166 |       yGap={yGap}
+ 167 |       chartId={chartId}
+ 168 |       enableQuadtree={enableQuadtree}
+ 169 |       enableLOD={enableLOD}
+ 170 |       enableCanvas={enableCanvas}
+ 171 |     />
+ 172 |   );
+ 173 | }
  174 | 
- 175 |   // const imagePositions = useMemo(() => {
- 176 |   //   return computeImagePositions(imageCount, CELL_SIZE);
- 177 |   // }, [imageCount]);
- 178 | 
- 179 |   const height = PLOT_DIMENSIONS.height;
- 180 |   const innerWidth = Math.max(
- 181 |     containerWidth - PLOT_MARGIN.left - PLOT_MARGIN.right,
- 182 |     320,
- 183 |   );
- 184 |   const innerHeight = Math.max(
- 185 |     height - PLOT_MARGIN.top - PLOT_MARGIN.bottom,
- 186 |     240,
- 187 |   );
- 188 | 
- 189 |   const normalizedPoints = useMemo(() => {
- 190 |     const xScale = xGap / BASE_IMAGE_GAP_X;
- 191 |     const yScale = yGap / BASE_IMAGE_GAP_Y;
- 192 | 
- 193 |     return plotterPoints.map((point) => ({
- 194 |       ...point,
- 195 |       scaledX: point.x * xScale,
- 196 |       scaledY: point.y * yScale,
- 197 |     }));
- 198 |   }, [plotterPoints, xGap, yGap]);
- 199 | 
- 200 |   const xExtent = useMemo(
+ 175 | const ControlsLayer = memo(function ControlsLayer({
+ 176 |   zoomLevel,
+ 177 |   onZoomIn,
+ 178 |   onZoomOut,
+ 179 |   onReset,
+ 180 |   interactionMode,
+ 181 |   onModeChange,
+ 182 | }) {
+ 183 |   return (
+ 184 |     <div style={{ position: "absolute", top: 0, left: 0, zIndex: 10 }}>
+ 185 |       <PlotterControls
+ 186 |         zoomLevel={zoomLevel}
+ 187 |         onZoomIn={onZoomIn}
+ 188 |         onZoomOut={onZoomOut}
+ 189 |         onReset={onReset}
+ 190 |         interactionMode={interactionMode}
+ 191 |         onModeChange={onModeChange}
+ 192 |       />
+ 193 |     </div>
+ 194 |   );
+ 195 | });
+ 196 | 
+ 197 | function RechartsCanvas({
+ 198 |   plotterPoints,
+ 199 |   imageCount,
+ 200 |   xGap,
 ```
 
-### Chunk 2/5
+### Chunk 2/7
 
 ```jsx
- 201 |     () => extentWithPadding(normalizedPoints.map((p) => p.scaledX)),
- 202 |     [normalizedPoints],
- 203 |   );
- 204 |   const yExtent = useMemo(
- 205 |     () => extentWithPadding(normalizedPoints.map((p) => p.scaledY)),
- 206 |     [normalizedPoints],
- 207 |   );
- 208 | 
- 209 |   const baseXScale = useMemo(
- 210 |     () => d3.scaleLinear().domain(xExtent).range([0, innerWidth]),
- 211 |     [xExtent, innerWidth],
- 212 |   );
- 213 | 
- 214 |   const baseYScale = useMemo(
- 215 |     () => d3.scaleLinear().domain(yExtent).range([innerHeight, 0]),
- 216 |     [yExtent, innerHeight],
- 217 |   );
- 218 | 
- 219 |   const visibleDomain = useMemo(
- 220 |     () =>
- 221 |       computeVisibleDomain(
- 222 |         xExtent,
- 223 |         yExtent,
- 224 |         transform,
- 225 |         innerWidth,
- 226 |         innerHeight,
- 227 |       ),
- 228 |     [xExtent, yExtent, transform, innerWidth, innerHeight],
- 229 |   );
- 230 | 
- 231 |   const xTicks = useMemo(() => {
- 232 |     return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8);
- 233 |   }, [visibleDomain.xMin, visibleDomain.xMax]);
- 234 | 
- 235 |   const yTicks = useMemo(() => {
- 236 |     return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6);
- 237 |   }, [visibleDomain.yMin, visibleDomain.yMax]);
- 238 | 
- 239 |   const xTickScale = useMemo(() => {
- 240 |     const scale = d3.scaleLinear();
- 241 |     scale.domain([visibleDomain.xMin, visibleDomain.xMax]);
- 242 |     scale.range([0, innerWidth]);
- 243 |     return scale;
- 244 |   }, [visibleDomain.xMin, visibleDomain.xMax, innerWidth]);
+ 201 |   yGap,
+ 202 |   chartId,
+ 203 |   enableQuadtree,
+ 204 |   enableLOD,
+ 205 |   enableCanvas,
+ 206 | }) {
+ 207 |   const containerRef = useRef(null);
+ 208 |   const svgRef = useRef(null);
+ 209 |   const rafIdRef = useRef(null);
+ 210 |   const dragRef = useRef(createInitialDragState());
+ 211 |   const cachedScalesRef = useRef({ key: null, xScale: null, yScale: null });
+ 212 |   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
+ 213 |   const initialViewportRef = useRef(getChartViewport(chartId));
+ 214 | 
+ 215 |   const initialScale = Math.max(
+ 216 |     initialViewportRef.current.scale || 1,
+ 217 |     ZOOM_MIN,
+ 218 |   );
+ 219 | 
+ 220 |   const [transform, setTransform] = useState(() =>
+ 221 |     initialScale <= MIN_ZOOM_SCALE
+ 222 |       ? {
+ 223 |           scale: 1,
+ 224 |           x: 0,
+ 225 |           y: 0,
+ 226 |         }
+ 227 |       : {
+ 228 |           scale: initialScale,
+ 229 |           x: initialViewportRef.current.translateX || 0,
+ 230 |           y: initialViewportRef.current.translateY || 0,
+ 231 |         },
+ 232 |   );
+ 233 |   const [hoveredPoint, setHoveredPoint] = useState(null);
+ 234 |   const tooltipRef = useRef(null);
+ 235 |   const [brushRect, setBrushRect] = useState(null);
+ 236 |   const [isDragging, setIsDragging] = useState(false);
+ 237 |   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+ 238 |   const brushStartRef = useRef(null);
+ 239 |   const pendingTransformRef = useRef(null);
+ 240 |   const { interactionMode, setInteractionMode, isPanMode } =
+ 241 |     useInteractionMode();
+ 242 | 
+ 243 |   useEffect(() => {
+ 244 |     if (!containerRef.current) return;
  245 | 
- 246 |   const yTickScale = useMemo(() => {
- 247 |     const scale = d3.scaleLinear();
- 248 |     scale.domain([visibleDomain.yMin, visibleDomain.yMax]);
- 249 |     scale.range([innerHeight, 0]);
- 250 |     return scale;
- 251 |   }, [visibleDomain.yMin, visibleDomain.yMax, innerHeight]);
- 252 | 
- 253 |   const axisProps = useMemo(
- 254 |     () => ({
- 255 |       xTicks,
- 256 |       yTicks,
- 257 |       xTickScale,
- 258 |       yTickScale,
- 259 |       innerWidth,
- 260 |       innerHeight,
- 261 |     }),
- 262 |     [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight],
- 263 |   );
- 264 | 
- 265 |   const clipId = "recharts-clip-static";
- 266 | 
- 267 |   const adaptiveCellSizeForRender = useMemo(() => {
- 268 |     /* Compute from base scales (content-space) so the cell size is set at
- 269 |        the default zoom level. The SVG transform then naturally magnifies
- 270 |        images when zoomed in, revealing more detail. */
- 271 |     return computeAdaptiveCellSize(
- 272 |       normalizedPoints,
- 273 |       (val) => baseXScale(val),
- 274 |       (val) => baseYScale(val),
- 275 |     );
- 276 |   }, [normalizedPoints, baseXScale, baseYScale]);
- 277 | 
- 278 |   const visiblePointsForRender = useMemo(() => {
- 279 |     /* Viewport culling still needs screen-space coordinates. */
- 280 |     const xScreenFn = (val) => baseXScale(val) * transform.scale + transform.x;
- 281 |     const yScreenFn = (val) => baseYScale(val) * transform.scale + transform.y;
- 282 |     return filterVisiblePoints(
- 283 |       normalizedPoints,
- 284 |       xScreenFn,
- 285 |       yScreenFn,
- 286 |       innerWidth,
- 287 |       innerHeight,
- 288 |       adaptiveCellSizeForRender * transform.scale,
- 289 |     );
- 290 |   }, [
- 291 |     normalizedPoints,
- 292 |     baseXScale,
- 293 |     baseYScale,
- 294 |     transform,
- 295 |     innerWidth,
- 296 |     innerHeight,
- 297 |     adaptiveCellSizeForRender,
- 298 |   ]);
- 299 | 
- 300 |   const effectiveImageCountForRender = useMemo(
- 301 |     () =>
- 302 |       computeEffectiveImageCount(
- 303 |         adaptiveCellSizeForRender * transform.scale,
- 304 |         imageCount,
- 305 |       ),
- 306 |     [adaptiveCellSizeForRender, transform.scale, imageCount],
- 307 |   );
- 308 | 
- 309 |   const zoomTo = useCallback(
- 310 |     (nextScale, anchorX, anchorY) => {
- 311 |       setTransform((prev) => {
- 312 |         const clampedScale = clamp(nextScale, ZOOM_MIN, ZOOM_MAX);
- 313 |         const pivotX = Number.isFinite(anchorX) ? anchorX : innerWidth / 2;
- 314 |         const pivotY = Number.isFinite(anchorY) ? anchorY : innerHeight / 2;
- 315 | 
- 316 |         const nextX =
- 317 |           prev.x - (pivotX - prev.x) * (clampedScale / prev.scale - 1);
- 318 |         const nextY =
- 319 |           prev.y - (pivotY - prev.y) * (clampedScale / prev.scale - 1);
- 320 | 
- 321 |         return clampTransform(
- 322 |           { scale: clampedScale, x: nextX, y: nextY },
- 323 |           innerWidth,
- 324 |           innerHeight,
- 325 |         );
- 326 |       });
- 327 |     },
- 328 |     [innerWidth, innerHeight],
- 329 |   );
- 330 | 
- 331 |   const pointMap = useMemo(
- 332 |     () => new Map(plotterPoints.map((p) => [p.id, p])),
- 333 |     [plotterPoints],
- 334 |   );
- 335 | 
- 336 |   const handleZoomIn = useCallback(() => {
- 337 |     logChartInteractionEvent({
- 338 |       interactionType: "ZOOM_IN",
- 339 |       visualizationLibrary: "Recharts",
- 340 |       interactionSource: "button",
- 341 |     });
- 342 |     zoomTo(transform.scale * ZOOM_STEP, innerWidth / 2, innerHeight / 2);
- 343 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
- 344 | 
- 345 |   const handleZoomOut = useCallback(() => {
- 346 |     logChartInteractionEvent({
- 347 |       interactionType: "ZOOM_OUT",
- 348 |       visualizationLibrary: "Recharts",
- 349 |       interactionSource: "button",
- 350 |     });
- 351 |     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
- 352 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
- 353 | 
- 354 |   const handleReset = useCallback(() => {
- 355 |     logChartInteractionEvent({
- 356 |       interactionType: "RESET",
- 357 |       visualizationLibrary: "Recharts",
- 358 |       interactionSource: "button",
- 359 |     });
- 360 |     setTransform({ scale: 1, x: 0, y: 0 });
- 361 |     setHoveredPoint(null);
- 362 |   }, []);
- 363 | 
- 364 |   const handleWheel = useCallback(
- 365 |     (event) => {
- 366 |       event.preventDefault();
+ 246 |     const observer = new ResizeObserver((entries) => {
+ 247 |       const entry = entries[0];
+ 248 |       if (entry) setContainerWidth(entry.contentRect.width);
+ 249 |     });
+ 250 | 
+ 251 |     observer.observe(containerRef.current);
+ 252 |     return () => observer.disconnect();
+ 253 |   }, []);
+ 254 | 
+ 255 |   useEffect(() => {
+ 256 |     if (isPanMode) {
+ 257 |       brushStartRef.current = null;
+ 258 |       setBrushRect(null);
+ 259 |     }
+ 260 |   }, [isPanMode]);
+ 261 | 
+ 262 |   useEffect(() => {
+ 263 |     updateChartViewport(chartId, {
+ 264 |       scale: transform.scale,
+ 265 |       translateX: transform.x,
+ 266 |       translateY: transform.y,
+ 267 |     });
+ 268 |   }, [chartId, transform]);
+ 269 | 
+ 270 |   useLayoutEffect(() => {
+ 271 |     const saved = getChartViewport(chartId);
+ 272 |     const savedScale = Math.max(saved?.scale ?? 1, ZOOM_MIN);
+ 273 | 
+ 274 |     setTransform(
+ 275 |       savedScale <= MIN_ZOOM_SCALE
+ 276 |         ? {
+ 277 |             scale: 1,
+ 278 |             x: 0,
+ 279 |             y: 0,
+ 280 |           }
+ 281 |         : {
+ 282 |             scale: savedScale,
+ 283 |             x: saved?.translateX ?? 0,
+ 284 |             y: saved?.translateY ?? 0,
+ 285 |           },
+ 286 |     );
+ 287 |   }, [chartId]);
+ 288 | 
+ 289 |   const height = PLOT_DIMENSIONS.height;
+ 290 |   const innerWidth = Math.max(
+ 291 |     containerWidth - PLOT_MARGIN.left - PLOT_MARGIN.right,
+ 292 |     320,
+ 293 |   );
+ 294 |   const innerHeight = Math.max(
+ 295 |     height - PLOT_MARGIN.top - PLOT_MARGIN.bottom,
+ 296 |     240,
+ 297 |   );
+ 298 | 
+ 299 |   const normalizedPoints = useMemo(() => {
+ 300 |     const xScale = xGap / BASE_IMAGE_GAP_X;
+ 301 |     const yScale = yGap / BASE_IMAGE_GAP_Y;
+ 302 | 
+ 303 |     return plotterPoints.map((point) => ({
+ 304 |       id: point.id,
+ 305 |       x: point.x,
+ 306 |       y: point.y,
+ 307 |       scaledX: point.x * xScale,
+ 308 |       scaledY: point.y * yScale,
+ 309 |       image: point.image,
+ 310 |       label: point.label,
+ 311 |       meta: point.meta,
+ 312 |     }));
+ 313 |   }, [plotterPoints, xGap, yGap]);
+ 314 | 
+ 315 |   const xExtent = useMemo(
+ 316 |     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledX),
+ 317 |     [normalizedPoints],
+ 318 |   );
+ 319 | 
+ 320 |   const yExtent = useMemo(
+ 321 |     () => extentWithPaddingFromPoints(normalizedPoints, (p) => p.scaledY),
+ 322 |     [normalizedPoints],
+ 323 |   );
+ 324 | 
+ 325 |   const { baseXScale, baseYScale } = useMemo(() => {
+ 326 |     const scaleKey = `${xExtent[0]}-${xExtent[1]}-${yExtent[0]}-${yExtent[1]}-${innerWidth}-${innerHeight}`;
+ 327 | 
+ 328 |     if (
+ 329 |       cachedScalesRef.current.key === scaleKey &&
+ 330 |       cachedScalesRef.current.xScale &&
+ 331 |       cachedScalesRef.current.yScale
+ 332 |     ) {
+ 333 |       return {
+ 334 |         baseXScale: cachedScalesRef.current.xScale,
+ 335 |         baseYScale: cachedScalesRef.current.yScale,
+ 336 |       };
+ 337 |     }
+ 338 | 
+ 339 |     const xScale = d3.scaleLinear().domain(xExtent).range([0, innerWidth]);
+ 340 |     const yScale = d3.scaleLinear().domain(yExtent).range([innerHeight, 0]);
+ 341 | 
+ 342 |     cachedScalesRef.current = { key: scaleKey, xScale, yScale };
+ 343 |     return { baseXScale: xScale, baseYScale: yScale };
+ 344 |   }, [xExtent, yExtent, innerWidth, innerHeight]);
+ 345 | 
+ 346 |   const quadtree = useMemo(() => {
+ 347 |     if (!normalizedPoints.length) return null;
+ 348 |     return buildQuadtree(normalizedPoints);
+ 349 |   }, [normalizedPoints]);
+ 350 | 
+ 351 |   const viewportCulledPoints = useMemo(() => {
+ 352 |     if (!quadtree || normalizedPoints.length === 0) {
+ 353 |       return normalizedPoints;
+ 354 |     }
+ 355 | 
+ 356 |     const xMinPx = (0 - transform.x) / transform.scale;
+ 357 |     const xMaxPx = (innerWidth - transform.x) / transform.scale;
+ 358 | 
+ 359 |     const yMaxPx = (0 - transform.y) / transform.scale;
+ 360 |     const yMinPx = (innerHeight - transform.y) / transform.scale;
+ 361 | 
+ 362 |     const xMin = baseXScale.invert(xMinPx);
+ 363 |     const xMax = baseXScale.invert(xMaxPx);
+ 364 | 
+ 365 |     const yMin = baseYScale.invert(yMinPx);
+ 366 |     const yMax = baseYScale.invert(yMaxPx);
  367 | 
- 368 |       const rect = svgRef.current?.getBoundingClientRect();
- 369 |       if (!rect) return;
- 370 | 
- 371 |       const clientX = event.clientX - rect.left;
- 372 |       const clientY = event.clientY - rect.top;
+ 368 |     const result = queryVisiblePointsQuadtree(
+ 369 |       quadtree,
+ 370 |       { xMin, xMax, yMin, yMax },
+ 371 |       0,
+ 372 |     );
  373 | 
- 374 |       const localX = clientX - PLOT_MARGIN.left;
- 375 |       const localY = clientY - PLOT_MARGIN.top;
- 376 | 
- 377 |       if (
- 378 |         localX < 0 ||
- 379 |         localY < 0 ||
- 380 |         localX > innerWidth ||
- 381 |         localY > innerHeight
- 382 |       ) {
- 383 |         return;
- 384 |       }
- 385 | 
- 386 |       const isZoomIn = event.deltaY < 0;
- 387 |       logChartInteractionEvent({
- 388 |         interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
- 389 |         visualizationLibrary: "Recharts",
- 390 |         interactionSource: "wheel",
- 391 |       });
- 392 | 
- 393 |       const factor = event.deltaY > 0 ? 1 / 1.15 : 1.15;
- 394 | 
- 395 |       setTransform((prev) => {
- 396 |         const clampedScale = clamp(prev.scale * factor, ZOOM_MIN, ZOOM_MAX);
- 397 | 
- 398 |         const nextX =
- 399 |           prev.x - (localX - prev.x) * (clampedScale / prev.scale - 1);
- 400 |         const nextY =
+ 374 |     return Array.isArray(result) && result.length ? result : normalizedPoints;
+ 375 |   }, [
+ 376 |     quadtree,
+ 377 |     normalizedPoints,
+ 378 |     transform.x,
+ 379 |     transform.scale,
+ 380 |     transform.y,
+ 381 |     innerWidth,
+ 382 |     innerHeight,
+ 383 |     baseXScale,
+ 384 |     baseYScale,
+ 385 |   ]);
+ 386 | 
+ 387 |   const visibleDomain = useMemo(
+ 388 |     () =>
+ 389 |       computeVisibleDomain(
+ 390 |         xExtent,
+ 391 |         yExtent,
+ 392 |         transform,
+ 393 |         innerWidth,
+ 394 |         innerHeight,
+ 395 |       ),
+ 396 |     [xExtent, yExtent, innerWidth, innerHeight, transform],
+ 397 |   );
+ 398 | 
+ 399 |   const xTicks = useMemo(() => {
+ 400 |     return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8);
 ```
 
-### Chunk 3/5
+### Chunk 3/7
 
 ```jsx
- 401 |           prev.y - (localY - prev.y) * (clampedScale / prev.scale - 1);
- 402 |         return clampTransform(
- 403 |           { scale: clampedScale, x: nextX, y: nextY },
- 404 |           innerWidth,
- 405 |           innerHeight,
- 406 |         );
- 407 |       });
- 408 |     },
- 409 |     [innerWidth, innerHeight],
- 410 |   );
- 411 | 
- 412 |   const handlePointerDown = useCallback(
- 413 |     (event) => {
- 414 |       const rect = svgRef.current?.getBoundingClientRect();
- 415 |       if (!rect) return;
- 416 | 
- 417 |       const localX = event.clientX - rect.left - PLOT_MARGIN.left;
- 418 |       const localY = event.clientY - rect.top - PLOT_MARGIN.top;
- 419 | 
- 420 |       if (
- 421 |         localX < 0 ||
- 422 |         localY < 0 ||
- 423 |         localX > innerWidth ||
- 424 |         localY > innerHeight
- 425 |       ) {
- 426 |         return;
- 427 |       }
- 428 | 
- 429 |       if (isPanMode) {
- 430 |         logChartInteractionEvent({
- 431 |           interactionType: "PAN",
- 432 |           visualizationLibrary: "Recharts",
- 433 |           interactionSource: "drag",
- 434 |         });
- 435 |         setIsDragging(true);
- 436 |         dragRef.current = {
- 437 |           dragging: true,
- 438 |           pointerId: event.pointerId,
- 439 |           startClientX: event.clientX,
- 440 |           startClientY: event.clientY,
- 441 |           startTransform: transform,
- 442 |         };
- 443 |         event.currentTarget.setPointerCapture?.(event.pointerId);
- 444 |         return;
- 445 |       }
- 446 | 
- 447 |       const clampedX = clamp(localX, 0, innerWidth);
- 448 |       const clampedY = clamp(localY, 0, innerHeight);
- 449 |       brushStartRef.current = { x: clampedX, y: clampedY };
- 450 |       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
- 451 |       event.currentTarget.setPointerCapture?.(event.pointerId);
- 452 |     },
- 453 |     [innerWidth, innerHeight, transform, isPanMode],
- 454 |   );
- 455 | 
- 456 |   const handlePointerMove = useCallback(
- 457 |     (event) => {
- 458 |       if (brushStartRef.current) {
- 459 |         const rect = svgRef.current?.getBoundingClientRect();
- 460 |         if (!rect) return;
- 461 | 
- 462 |         const localX = clamp(
- 463 |           event.clientX - rect.left - PLOT_MARGIN.left,
- 464 |           0,
- 465 |           innerWidth,
- 466 |         );
- 467 |         const localY = clamp(
- 468 |           event.clientY - rect.top - PLOT_MARGIN.top,
- 469 |           0,
- 470 |           innerHeight,
- 471 |         );
- 472 |         const startPoint = brushStartRef.current;
- 473 | 
- 474 |         setBrushRect({
- 475 |           x: Math.min(startPoint.x, localX),
- 476 |           y: Math.min(startPoint.y, localY),
- 477 |           width: Math.abs(localX - startPoint.x),
- 478 |           height: Math.abs(localY - startPoint.y),
- 479 |         });
- 480 |         return;
- 481 |       }
- 482 | 
- 483 |       if (dragRef.current.dragging) {
- 484 |         const dx = event.clientX - dragRef.current.startClientX;
- 485 |         const dy = event.clientY - dragRef.current.startClientY;
- 486 | 
- 487 |         const next = clampTransform(
- 488 |           {
- 489 |             scale: dragRef.current.startTransform.scale,
- 490 |             x: dragRef.current.startTransform.x + dx,
- 491 |             y: dragRef.current.startTransform.y + dy,
- 492 |           },
- 493 |           innerWidth,
- 494 |           innerHeight,
- 495 |         );
- 496 | 
- 497 |         setTransform(next);
- 498 |         return;
- 499 |       }
- 500 | 
- 501 |       const target = event.target?.closest?.("[data-point-id]");
- 502 | 
- 503 |       if (!target) {
- 504 |         setHoveredPoint((prev) => (prev ? null : prev));
- 505 |         return;
- 506 |       }
- 507 | 
- 508 |       const id = target.getAttribute("data-point-id");
- 509 |       const point = pointMap.get(id);
+ 401 |   }, [visibleDomain.xMin, visibleDomain.xMax]);
+ 402 | 
+ 403 |   const yTicks = useMemo(() => {
+ 404 |     return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6);
+ 405 |   }, [visibleDomain.yMin, visibleDomain.yMax]);
+ 406 | 
+ 407 |   const xTickScale = useMemo(() => {
+ 408 |     const scale = d3.scaleLinear();
+ 409 |     scale.domain([visibleDomain.xMin, visibleDomain.xMax]);
+ 410 |     scale.range([0, innerWidth]);
+ 411 |     return scale;
+ 412 |   }, [visibleDomain.xMin, visibleDomain.xMax, innerWidth]);
+ 413 | 
+ 414 |   const yTickScale = useMemo(() => {
+ 415 |     const scale = d3.scaleLinear();
+ 416 |     scale.domain([visibleDomain.yMin, visibleDomain.yMax]);
+ 417 |     scale.range([innerHeight, 0]);
+ 418 |     return scale;
+ 419 |   }, [visibleDomain.yMin, visibleDomain.yMax, innerHeight]);
+ 420 | 
+ 421 |   const axisProps = useMemo(
+ 422 |     () => ({
+ 423 |       xTicks,
+ 424 |       yTicks,
+ 425 |       xTickScale,
+ 426 |       yTickScale,
+ 427 |       innerWidth,
+ 428 |       innerHeight,
+ 429 |     }),
+ 430 |     [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight],
+ 431 |   );
+ 432 | 
+ 433 |   const clipId = useMemo(
+ 434 |     () => `recharts-clip-${String(chartId).replace(/[^a-zA-Z0-9_-]/g, "")}`,
+ 435 |     [chartId],
+ 436 |   );
+ 437 | 
+ 438 |   const adaptiveCellSizeForRender = useMemo(() => {
+ 439 |     return computeAdaptiveCellSize(
+ 440 |       normalizedPoints,
+ 441 |       (val) => baseXScale(val),
+ 442 |       (val) => baseYScale(val),
+ 443 |     );
+ 444 |   }, [normalizedPoints, baseXScale, baseYScale]);
+ 445 | 
+ 446 |   const visiblePointsForRender = useMemo(() => {
+ 447 |     if (!enableQuadtree) {
+ 448 |       return normalizedPoints;
+ 449 |     }
+ 450 |     return viewportCulledPoints;
+ 451 |   }, [enableQuadtree, normalizedPoints, viewportCulledPoints]);
+ 452 | 
+ 453 |   const renderStats = useMemo(() => {
+ 454 |     const totalPoints = plotterPoints.length;
+ 455 |     const viewportCulledCount = Math.max(
+ 456 |       0,
+ 457 |       totalPoints - viewportCulledPoints.length,
+ 458 |     );
+ 459 |     const renderCulledCount = Math.max(
+ 460 |       0,
+ 461 |       viewportCulledPoints.length - visiblePointsForRender.length,
+ 462 |     );
+ 463 |     const totalCulledCount = Math.max(
+ 464 |       0,
+ 465 |       totalPoints - visiblePointsForRender.length,
+ 466 |     );
+ 467 | 
+ 468 |     return {
+ 469 |       chartId,
+ 470 |       totalPoints,
+ 471 |       afterViewportCulling: viewportCulledPoints.length,
+ 472 |       renderedPoints: visiblePointsForRender.length,
+ 473 |       viewportCulledCount,
+ 474 |       renderCulledCount,
+ 475 |       totalCulledCount,
+ 476 |       zoomScale: Number(transform.scale.toFixed(3)),
+ 477 |     };
+ 478 |   }, [
+ 479 |     chartId,
+ 480 |     plotterPoints.length,
+ 481 |     viewportCulledPoints.length,
+ 482 |     visiblePointsForRender.length,
+ 483 |     transform.scale,
+ 484 |   ]);
+ 485 | 
+ 486 |   const effectiveImageCountForRender = useMemo(() => {
+ 487 |     if (!enableLOD) {
+ 488 |       return imageCount;
+ 489 |     }
+ 490 | 
+ 491 |     return Math.max(
+ 492 |       1,
+ 493 |       computeEffectiveImageCount(
+ 494 |         adaptiveCellSizeForRender * transform.scale,
+ 495 |         imageCount,
+ 496 |       ),
+ 497 |     );
+ 498 |   }, [enableLOD, adaptiveCellSizeForRender, transform.scale, imageCount]);
+ 499 | 
+ 500 |   const throttledTransformUpdate = useThrottledCallback(
+ 501 |     (nextTransform) => setTransform(nextTransform),
+ 502 |     16,
+ 503 |   );
+ 504 | 
+ 505 |   const scheduleTransformUpdate = useCallback(
+ 506 |     (nextTransform) => {
+ 507 |       pendingTransformRef.current = nextTransform;
+ 508 | 
+ 509 |       if (rafIdRef.current) return;
  510 | 
- 511 |       if (!point) {
- 512 |         setHoveredPoint((prev) => (prev ? null : prev));
- 513 |         return;
- 514 |       }
- 515 | 
- 516 |       /*
- 517 |        * Move tooltip with cursor WITHOUT React state updates.
- 518 |        */
- 519 |       if (tooltipRef.current) {
- 520 |         tooltipRef.current.style.left = `${event.clientX + 12}px`;
- 521 |         tooltipRef.current.style.top = `${event.clientY + 12}px`;
- 522 |       }
- 523 | 
- 524 |       if (hoveredPoint?.id !== point.id && tooltipRef.current) {
- 525 |         tooltipRef.current.style.left = `${event.clientX + 12}px`;
- 526 |         tooltipRef.current.style.top = `${event.clientY + 12}px`;
- 527 |       }
- 528 | 
- 529 |       /*
- 530 |        * Re-render ONLY when changing image.
- 531 |        */
- 532 |       setHoveredPoint((prev) => (prev?.id === point.id ? prev : point));
- 533 |     },
- 534 |     [innerWidth, innerHeight, pointMap, hoveredPoint],
- 535 |   );
- 536 | 
- 537 |   const handlePointerUp = useCallback(
- 538 |     (event) => {
- 539 |       if (brushStartRef.current && brushRect) {
- 540 |         const isTooSmall =
- 541 |           brushRect.width < BRUSH_MIN_PIXELS ||
- 542 |           brushRect.height < BRUSH_MIN_PIXELS;
- 543 | 
- 544 |         if (!isTooSmall) {
- 545 |           logChartInteractionEvent({
- 546 |             interactionType: "ZOOM_IN",
- 547 |             visualizationLibrary: "Recharts",
- 548 |             interactionSource: "brush",
- 549 |           });
- 550 |           const newTransform = convertBrushToTransform(
- 551 |             brushRect,
- 552 |             transform,
- 553 |             innerWidth,
- 554 |             innerHeight,
- 555 |           );
- 556 |           setTransform(newTransform);
- 557 |         }
- 558 | 
- 559 |         brushStartRef.current = null;
- 560 |         setBrushRect(null);
- 561 |         event.currentTarget.releasePointerCapture?.(event.pointerId);
- 562 |         return;
- 563 |       }
- 564 | 
- 565 |       setIsDragging(false);
- 566 |       dragRef.current.dragging = false;
- 567 |       dragRef.current.pointerId = null;
- 568 |       event.currentTarget.releasePointerCapture?.(event.pointerId);
- 569 |     },
- 570 |     [brushRect, transform, innerWidth, innerHeight],
- 571 |   );
- 572 | 
- 573 |   useEffect(() => {
- 574 |     const svgElement = svgRef.current;
- 575 | 
- 576 |     if (!svgElement) return;
- 577 | 
- 578 |     const wheelHandler = (event) => {
- 579 |       event.preventDefault();
- 580 |       handleWheel(event);
- 581 |     };
+ 511 |       rafIdRef.current = requestAnimationFrame(() => {
+ 512 |         rafIdRef.current = null;
+ 513 | 
+ 514 |         if (pendingTransformRef.current) {
+ 515 |           throttledTransformUpdate(pendingTransformRef.current);
+ 516 |           pendingTransformRef.current = null;
+ 517 |         }
+ 518 |       });
+ 519 |     },
+ 520 |     [throttledTransformUpdate],
+ 521 |   );
+ 522 | 
+ 523 |   const zoomTo = useCallback(
+ 524 |     (nextScale, anchorX, anchorY) => {
+ 525 |       setTransform((prev) => {
+ 526 |         const clampedScale = clamp(nextScale, ZOOM_MIN, ZOOM_MAX);
+ 527 | 
+ 528 |         if (clampedScale <= MIN_ZOOM_SCALE) {
+ 529 |           return { scale: 1, x: 0, y: 0 };
+ 530 |         }
+ 531 | 
+ 532 |         const pivotX = Number.isFinite(anchorX) ? anchorX : innerWidth / 2;
+ 533 |         const pivotY = Number.isFinite(anchorY) ? anchorY : innerHeight / 2;
+ 534 | 
+ 535 |         const nextX =
+ 536 |           prev.x - (pivotX - prev.x) * (clampedScale / prev.scale - 1);
+ 537 |         const nextY =
+ 538 |           prev.y - (pivotY - prev.y) * (clampedScale / prev.scale - 1);
+ 539 | 
+ 540 |         return clampTransform(
+ 541 |           { scale: clampedScale, x: nextX, y: nextY },
+ 542 |           innerWidth,
+ 543 |           innerHeight,
+ 544 |         );
+ 545 |       });
+ 546 |     },
+ 547 |     [innerWidth, innerHeight],
+ 548 |   );
+ 549 | 
+ 550 |   const pointMap = useMemo(() => {
+ 551 |     const map = new Map();
+ 552 | 
+ 553 |     for (const point of visiblePointsForRender) {
+ 554 |       map.set(String(point.id), point);
+ 555 |     }
+ 556 | 
+ 557 |     return map;
+ 558 |   }, [visiblePointsForRender]);
+ 559 | 
+ 560 |   const handleZoomIn = useCallback(() => {
+ 561 |     logChartInteractionEvent({
+ 562 |       interactionType: "ZOOM_IN",
+ 563 |       visualizationLibrary: "Recharts",
+ 564 |       interactionSource: "button",
+ 565 |     });
+ 566 |     zoomTo(transform.scale * ZOOM_STEP, innerWidth / 2, innerHeight / 2);
+ 567 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
+ 568 | 
+ 569 |   const handleZoomOut = useCallback(() => {
+ 570 |     if (transform.scale <= MIN_ZOOM_SCALE) {
+ 571 |       return;
+ 572 |     }
+ 573 | 
+ 574 |     logChartInteractionEvent({
+ 575 |       interactionType: "ZOOM_OUT",
+ 576 |       visualizationLibrary: "Recharts",
+ 577 |       interactionSource: "button",
+ 578 |     });
+ 579 | 
+ 580 |     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
+ 581 |   }, [transform.scale, zoomTo, innerWidth, innerHeight]);
  582 | 
- 583 |     svgElement.addEventListener("wheel", wheelHandler, {
- 584 |       passive: false,
- 585 |     });
- 586 | 
- 587 |     return () => {
- 588 |       svgElement.removeEventListener("wheel", wheelHandler);
- 589 |     };
- 590 |   }, [handleWheel]);
- 591 | 
- 592 |   const handleDoubleClick = useCallback(() => {
- 593 |     logChartInteractionEvent({
- 594 |       interactionType: "RESET",
- 595 |       visualizationLibrary: "Recharts",
- 596 |       interactionSource: "double_click",
- 597 |     });
- 598 |     setTransform({ scale: 1, x: 0, y: 0 });
- 599 |     setHoveredPoint(null);
- 600 |   }, []);
+ 583 |   const handleReset = useCallback(() => {
+ 584 |     logChartInteractionEvent({
+ 585 |       interactionType: "RESET",
+ 586 |       visualizationLibrary: "Recharts",
+ 587 |       interactionSource: "button",
+ 588 |     });
+ 589 |     setTransform({ scale: 1, x: 0, y: 0 });
+ 590 |     setHoveredPoint(null);
+ 591 |   }, []);
+ 592 | 
+ 593 |   const handleWheel = useCallback(
+ 594 |     (event) => {
+ 595 |       event.preventDefault();
+ 596 | 
+ 597 |       const rect = svgRef.current?.getBoundingClientRect();
+ 598 |       if (!rect) return;
+ 599 | 
+ 600 |       const clientX = event.clientX - rect.left;
 ```
 
-### Chunk 4/5
+### Chunk 4/7
 
 ```jsx
- 601 | 
- 602 |   const stageCursor = isPanMode
- 603 |     ? isDragging
- 604 |       ? "grabbing"
- 605 |       : "grab"
- 606 |     : "crosshair";
- 607 | 
- 608 |   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
- 609 | 
- 610 |   return (
- 611 |     <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
- 612 |       <ControlsLayer
- 613 |         zoomLevel={transform.scale}
- 614 |         onZoomIn={handleZoomIn}
- 615 |         onZoomOut={handleZoomOut}
- 616 |         onReset={handleReset}
- 617 |         interactionMode={interactionMode}
- 618 |         onModeChange={setInteractionMode}
- 619 |       />
+ 601 |       const clientY = event.clientY - rect.top;
+ 602 | 
+ 603 |       const localX = clientX - PLOT_MARGIN.left;
+ 604 |       const localY = clientY - PLOT_MARGIN.top;
+ 605 | 
+ 606 |       if (
+ 607 |         localX < 0 ||
+ 608 |         localY < 0 ||
+ 609 |         localX > innerWidth ||
+ 610 |         localY > innerHeight
+ 611 |       ) {
+ 612 |         return;
+ 613 |       }
+ 614 | 
+ 615 |       const isZoomIn = event.deltaY < 0;
+ 616 | 
+ 617 |       if (!isZoomIn && transform.scale <= MIN_ZOOM_SCALE) {
+ 618 |         return;
+ 619 |       }
  620 | 
- 621 |       <svg
- 622 |         ref={svgRef}
- 623 |         width={containerWidth}
- 624 |         height={height}
- 625 |         style={{
- 626 |           display: "block",
- 627 |           touchAction: "none",
- 628 |           userSelect: "none",
- 629 |           cursor: stageCursor,
- 630 |         }}
- 631 |         onPointerDown={handlePointerDown}
- 632 |         onPointerMove={handlePointerMove}
- 633 |         onPointerUp={handlePointerUp}
- 634 |         onPointerLeave={handlePointerUp}
- 635 |         onDoubleClick={handleDoubleClick}
- 636 |       >
- 637 |         <defs>
- 638 |           <clipPath id={clipId}>
- 639 |             <rect
- 640 |               x={PLOT_MARGIN.left}
- 641 |               y={PLOT_MARGIN.top}
- 642 |               width={innerWidth}
- 643 |               height={innerHeight}
- 644 |             />
- 645 |           </clipPath>
- 646 |         </defs>
- 647 | 
- 648 |         <rect
- 649 |           x={0}
- 650 |           y={0}
- 651 |           width={containerWidth}
- 652 |           height={height}
- 653 |           fill="#16213e"
- 654 |         />
- 655 | 
- 656 |         <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
- 657 |           <rect
- 658 |             x={0}
- 659 |             y={0}
- 660 |             width={innerWidth}
- 661 |             height={innerHeight}
- 662 |             fill="#16213e"
- 663 |           />
- 664 | 
- 665 |           <AxisGrid {...axisProps} />
+ 621 |       logChartInteractionEvent({
+ 622 |         interactionType: isZoomIn ? "ZOOM_IN" : "ZOOM_OUT",
+ 623 |         visualizationLibrary: "Recharts",
+ 624 |         interactionSource: "wheel",
+ 625 |       });
+ 626 | 
+ 627 |       const factor = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+ 628 | 
+ 629 |       setTransform((prev) => {
+ 630 |         const clampedScale = clamp(prev.scale * factor, ZOOM_MIN, ZOOM_MAX);
+ 631 | 
+ 632 |         if (clampedScale <= MIN_ZOOM_SCALE) {
+ 633 |           return { scale: 1, x: 0, y: 0 };
+ 634 |         }
+ 635 | 
+ 636 |         const nextX =
+ 637 |           prev.x - (localX - prev.x) * (clampedScale / prev.scale - 1);
+ 638 |         const nextY =
+ 639 |           prev.y - (localY - prev.y) * (clampedScale / prev.scale - 1);
+ 640 |         return clampTransform(
+ 641 |           { scale: clampedScale, x: nextX, y: nextY },
+ 642 |           innerWidth,
+ 643 |           innerHeight,
+ 644 |         );
+ 645 |       });
+ 646 |     },
+ 647 |     [innerWidth, innerHeight, transform.scale],
+ 648 |   );
+ 649 | 
+ 650 |   const handlePointerDown = useCallback(
+ 651 |     (event) => {
+ 652 |       const rect = svgRef.current?.getBoundingClientRect();
+ 653 |       if (!rect) return;
+ 654 | 
+ 655 |       const localX = event.clientX - rect.left - PLOT_MARGIN.left;
+ 656 |       const localY = event.clientY - rect.top - PLOT_MARGIN.top;
+ 657 | 
+ 658 |       if (
+ 659 |         localX < 0 ||
+ 660 |         localY < 0 ||
+ 661 |         localX > innerWidth ||
+ 662 |         localY > innerHeight
+ 663 |       ) {
+ 664 |         return;
+ 665 |       }
  666 | 
- 667 |           <AxisLabels {...axisProps} />
- 668 | 
- 669 |           <g clipPath={`url(#${clipId})`}>
- 670 |             <g transform={contentTransform}>
- 671 |               {visiblePointsForRender.map((point) => (
- 672 |                 <ImagePoint
- 673 |                   key={point.id}
- 674 |                   point={point}
- 675 |                   baseXScale={baseXScale}
- 676 |                   baseYScale={baseYScale}
- 677 |                   imageCount={effectiveImageCountForRender}
- 678 |                   adaptiveCellSize={adaptiveCellSizeForRender}
- 679 |                 />
- 680 |               ))}
- 681 |             </g>
- 682 |           </g>
- 683 | 
- 684 |           <rect
- 685 |             x={0}
- 686 |             y={0}
- 687 |             width={innerWidth}
- 688 |             height={innerHeight}
- 689 |             fill="transparent"
- 690 |             stroke="#555"
- 691 |             pointerEvents="none"
- 692 |           />
- 693 | 
- 694 |           {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
- 695 |             <rect
- 696 |               x={brushRect.x}
- 697 |               y={brushRect.y}
- 698 |               width={brushRect.width}
- 699 |               height={brushRect.height}
- 700 |               fill={BRUSH_FILL}
- 701 |               stroke={BRUSH_STROKE}
- 702 |               strokeWidth={BRUSH_STROKE_WIDTH}
- 703 |               rx={2}
- 704 |               ry={2}
- 705 |               pointerEvents="none"
- 706 |             />
- 707 |           )}
- 708 |         </g>
- 709 |       </svg>
- 710 |       <TooltipOverlay hoveredPoint={hoveredPoint} tooltipRef={tooltipRef} />
- 711 |     </div>
- 712 |   );
- 713 | }
+ 667 |       if (isPanMode) {
+ 668 |         if (transform.scale <= MIN_ZOOM_SCALE) {
+ 669 |           return;
+ 670 |         }
+ 671 |         logChartInteractionEvent({
+ 672 |           interactionType: "PAN",
+ 673 |           visualizationLibrary: "Recharts",
+ 674 |           interactionSource: "drag",
+ 675 |         });
+ 676 |         setIsDragging(true);
+ 677 |         dragRef.current = {
+ 678 |           dragging: true,
+ 679 |           pointerId: event.pointerId,
+ 680 |           startClientX: event.clientX,
+ 681 |           startClientY: event.clientY,
+ 682 |           startTransform: transform,
+ 683 |         };
+ 684 |         event.currentTarget.setPointerCapture?.(event.pointerId);
+ 685 |         return;
+ 686 |       }
+ 687 | 
+ 688 |       const clampedX = clamp(localX, 0, innerWidth);
+ 689 |       const clampedY = clamp(localY, 0, innerHeight);
+ 690 |       brushStartRef.current = { x: clampedX, y: clampedY };
+ 691 |       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
+ 692 |       event.currentTarget.setPointerCapture?.(event.pointerId);
+ 693 |     },
+ 694 |     [innerWidth, innerHeight, transform, isPanMode],
+ 695 |   );
+ 696 | 
+ 697 |   const handlePointerMove = useCallback(
+ 698 |     (event) => {
+ 699 |       if (brushStartRef.current) {
+ 700 |         const rect = svgRef.current?.getBoundingClientRect();
+ 701 |         if (!rect) return;
+ 702 | 
+ 703 |         const localX = clamp(
+ 704 |           event.clientX - rect.left - PLOT_MARGIN.left,
+ 705 |           0,
+ 706 |           innerWidth,
+ 707 |         );
+ 708 |         const localY = clamp(
+ 709 |           event.clientY - rect.top - PLOT_MARGIN.top,
+ 710 |           0,
+ 711 |           innerHeight,
+ 712 |         );
+ 713 |         const startPoint = brushStartRef.current;
  714 | 
- 715 | const ImagePoint = memo(function ImagePoint({
- 716 |   point,
- 717 |   baseXScale,
- 718 |   baseYScale,
- 719 |   imageCount,
- 720 |   adaptiveCellSize,
- 721 | }) {
- 722 |   const centerX = baseXScale(point.scaledX);
- 723 |   const centerY = baseYScale(point.scaledY);
- 724 |   const cellSize = adaptiveCellSize ?? CELL_SIZE;
- 725 | 
- 726 |   const positions = useMemo(
- 727 |     () =>
- 728 |       computeImagePositions(centerX, centerY, cellSize, cellSize, imageCount),
- 729 |     [centerX, centerY, cellSize, imageCount],
- 730 |   );
- 731 | 
- 732 |   return (
- 733 |     <>
- 734 |       {positions.map((position, index) => (
- 735 |         <image
- 736 |           key={`${point.id}-${imageCount}-${index}`}
- 737 |           data-point-id={point.id}
- 738 |           href={point.image}
- 739 |           x={position.x}
- 740 |           y={position.y}
- 741 |           width={position.width}
- 742 |           height={position.height}
- 743 |           preserveAspectRatio="xMidYMid meet"
- 744 |           style={{ cursor: "pointer" }}
- 745 |         />
- 746 |       ))}
- 747 |     </>
- 748 |   );
- 749 | });
- 750 | 
- 751 | const AxisGrid = memo(function AxisGrid({
- 752 |   xTicks,
- 753 |   yTicks,
- 754 |   xTickScale,
- 755 |   yTickScale,
- 756 |   innerWidth,
- 757 |   innerHeight,
- 758 | }) {
- 759 |   return (
- 760 |     <>
- 761 |       {xTicks.map((tick, index) => {
- 762 |         const x = xTickScale(tick);
- 763 |         return (
- 764 |           <line
- 765 |             key={`xgrid-${index}`}
- 766 |             x1={x}
- 767 |             y1={0}
- 768 |             x2={x}
- 769 |             y2={innerHeight}
- 770 |             stroke="#2a2a3e"
- 771 |             strokeDasharray="3 3"
- 772 |           />
- 773 |         );
- 774 |       })}
- 775 | 
- 776 |       {yTicks.map((tick, index) => {
- 777 |         const y = yTickScale(tick);
- 778 |         return (
- 779 |           <line
- 780 |             key={`ygrid-${index}`}
- 781 |             x1={0}
- 782 |             y1={y}
- 783 |             x2={innerWidth}
- 784 |             y2={y}
- 785 |             stroke="#2a2a3e"
- 786 |             strokeDasharray="3 3"
- 787 |           />
- 788 |         );
- 789 |       })}
- 790 |     </>
- 791 |   );
- 792 | });
- 793 | 
- 794 | const AxisLabels = memo(function AxisLabels({
- 795 |   xTicks,
- 796 |   yTicks,
- 797 |   xTickScale,
- 798 |   yTickScale,
- 799 |   innerHeight,
- 800 | }) {
+ 715 |         setBrushRect({
+ 716 |           x: Math.min(startPoint.x, localX),
+ 717 |           y: Math.min(startPoint.y, localY),
+ 718 |           width: Math.abs(localX - startPoint.x),
+ 719 |           height: Math.abs(localY - startPoint.y),
+ 720 |         });
+ 721 |         return;
+ 722 |       }
+ 723 |       const dragState = dragRef.current;
+ 724 | 
+ 725 |       if (dragState?.dragging) {
+ 726 |         if (dragState.pointerId !== event.pointerId) {
+ 727 |           return;
+ 728 |         }
+ 729 | 
+ 730 |         if (dragState.startTransform.scale <= MIN_ZOOM_SCALE) {
+ 731 |           dragRef.current = createInitialDragState();
+ 732 |           setIsDragging(false);
+ 733 |           setTransform({ scale: 1, x: 0, y: 0 });
+ 734 |           return;
+ 735 |         }
+ 736 | 
+ 737 |         const dx = event.clientX - dragState.startClientX;
+ 738 |         const dy = event.clientY - dragState.startClientY;
+ 739 | 
+ 740 |         const next = clampTransform(
+ 741 |           {
+ 742 |             scale: dragState.startTransform.scale,
+ 743 |             x: dragState.startTransform.x + dx,
+ 744 |             y: dragState.startTransform.y + dy,
+ 745 |           },
+ 746 |           innerWidth,
+ 747 |           innerHeight,
+ 748 |         );
+ 749 | 
+ 750 |         scheduleTransformUpdate(next);
+ 751 |         return;
+ 752 |       }
+ 753 | 
+ 754 |       const target = event.target?.closest?.("[data-point-id]");
+ 755 | 
+ 756 |       if (!target) {
+ 757 |         setHoveredPoint((prev) => (prev ? null : prev));
+ 758 |         return;
+ 759 |       }
+ 760 | 
+ 761 |       const id = target.getAttribute("data-point-id");
+ 762 |       const point = pointMap.get(id);
+ 763 | 
+ 764 |       if (!point) {
+ 765 |         setHoveredPoint((prev) => (prev ? null : prev));
+ 766 |         return;
+ 767 |       }
+ 768 | 
+ 769 |       setTooltipPosition({
+ 770 |         x: event.clientX + 12,
+ 771 |         y: event.clientY + 12,
+ 772 |       });
+ 773 | 
+ 774 |       setHoveredPoint((prev) => (prev?.id === point.id ? prev : point));
+ 775 |     },
+ 776 |     [pointMap, innerWidth, innerHeight, scheduleTransformUpdate],
+ 777 |   );
+ 778 | 
+ 779 |   const handlePointerUp = useCallback(
+ 780 |     (event) => {
+ 781 |       if (brushStartRef.current && brushRect) {
+ 782 |         const isTooSmall =
+ 783 |           brushRect.width < BRUSH_MIN_PIXELS ||
+ 784 |           brushRect.height < BRUSH_MIN_PIXELS;
+ 785 | 
+ 786 |         if (!isTooSmall) {
+ 787 |           logChartInteractionEvent({
+ 788 |             interactionType: "ZOOM_IN",
+ 789 |             visualizationLibrary: "Recharts",
+ 790 |             interactionSource: "brush",
+ 791 |           });
+ 792 |           const newTransform = convertBrushToTransform(
+ 793 |             brushRect,
+ 794 |             transform,
+ 795 |             innerWidth,
+ 796 |             innerHeight,
+ 797 |           );
+ 798 | 
+ 799 |           if (newTransform.scale <= MIN_ZOOM_SCALE) {
+ 800 |             setTransform({ scale: 1, x: 0, y: 0 });
 ```
 
-### Chunk 5/5
+### Chunk 5/7
 
 ```jsx
- 801 |   return (
- 802 |     <>
- 803 |       {xTicks.map((tick, index) => {
- 804 |         const x = xTickScale(tick);
- 805 |         return (
- 806 |           <text
- 807 |             key={`xlabel-${index}`}
- 808 |             x={x}
- 809 |             y={innerHeight + 18}
- 810 |             fill="#888"
- 811 |             fontSize="11"
- 812 |             textAnchor="middle"
- 813 |           >
- 814 |             {formatTick(tick)}
- 815 |           </text>
- 816 |         );
- 817 |       })}
+ 801 |           } else {
+ 802 |             setTransform(newTransform);
+ 803 |           }
+ 804 |         }
+ 805 | 
+ 806 |         brushStartRef.current = null;
+ 807 |         setBrushRect(null);
+ 808 |         event.currentTarget.releasePointerCapture?.(event.pointerId);
+ 809 |         return;
+ 810 |       }
+ 811 |       setIsDragging(false);
+ 812 | 
+ 813 |       const dragState = dragRef.current;
+ 814 | 
+ 815 |       if (dragState?.dragging && transform.scale <= MIN_ZOOM_SCALE) {
+ 816 |         setTransform({ scale: 1, x: 0, y: 0 });
+ 817 |       }
  818 | 
- 819 |       {yTicks.map((tick, index) => {
- 820 |         const y = yTickScale(tick);
- 821 |         return (
- 822 |           <text
- 823 |             key={`ylabel-${index}`}
- 824 |             x={-8}
- 825 |             y={y + 4}
- 826 |             fill="#888"
- 827 |             fontSize="11"
- 828 |             textAnchor="end"
- 829 |           >
- 830 |             {formatTick(tick)}
- 831 |           </text>
- 832 |         );
- 833 |       })}
- 834 |     </>
- 835 |   );
- 836 | });
- 837 | 
- 838 | function extentWithPadding(values) {
- 839 |   if (!values.length) return [0, 1];
- 840 | 
- 841 |   const min = Math.min(...values);
- 842 |   const max = Math.max(...values);
- 843 |   const span = max - min;
- 844 |   const pad = span === 0 ? 5 : Math.max(span * 0.18, 1);
- 845 | 
- 846 |   return [min - pad, max + pad];
- 847 | }
- 848 | 
- 849 | function computeVisibleDomain(
- 850 |   xExtent,
- 851 |   yExtent,
- 852 |   transform,
- 853 |   innerWidth,
- 854 |   innerHeight,
- 855 | ) {
- 856 |   const domainWidth = xExtent[1] - xExtent[0];
- 857 |   const domainHeight = yExtent[1] - yExtent[0];
- 858 | 
- 859 |   const xMin =
- 860 |     xExtent[0] - (transform.x / transform.scale / innerWidth) * domainWidth;
- 861 |   const xMax = xMin + domainWidth / transform.scale;
- 862 | 
- 863 |   const yMax =
- 864 |     yExtent[1] + (transform.y / transform.scale / innerHeight) * domainHeight;
- 865 |   const yMin = yMax - domainHeight / transform.scale;
- 866 | 
- 867 |   return { xMin, xMax, yMin, yMax };
- 868 | }
- 869 | 
- 870 | function clampTransform(transform, innerWidth, innerHeight) {
- 871 |   const scale = transform.scale;
- 872 |   const scaledWidth = innerWidth * scale;
- 873 |   const scaledHeight = innerHeight * scale;
- 874 | 
- 875 |   let x = transform.x;
- 876 |   let y = transform.y;
- 877 | 
- 878 |   if (scaledWidth <= innerWidth) {
- 879 |     x = (innerWidth - scaledWidth) / 2;
- 880 |   } else {
- 881 |     x = Math.min(0, Math.max(innerWidth - scaledWidth, x));
- 882 |   }
- 883 | 
- 884 |   if (scaledHeight <= innerHeight) {
- 885 |     y = (innerHeight - scaledHeight) / 2;
- 886 |   } else {
- 887 |     y = Math.min(0, Math.max(innerHeight - scaledHeight, y));
- 888 |   }
- 889 | 
- 890 |   return { scale, x, y };
- 891 | }
- 892 | 
- 893 | function clamp(value, min, max) {
- 894 |   return Math.max(min, Math.min(max, value));
- 895 | }
- 896 | 
- 897 | function convertBrushToTransform(
- 898 |   brushPixelRect,
- 899 |   currentTransform,
- 900 |   plotInnerWidth,
- 901 |   plotInnerHeight,
- 902 | ) {
- 903 |   const contentX0 =
- 904 |     (brushPixelRect.x - currentTransform.x) / currentTransform.scale;
- 905 |   const contentY0 =
- 906 |     (brushPixelRect.y - currentTransform.y) / currentTransform.scale;
- 907 |   const contentBrushWidth = brushPixelRect.width / currentTransform.scale;
- 908 |   const contentBrushHeight = brushPixelRect.height / currentTransform.scale;
- 909 | 
- 910 |   const fitScaleX = plotInnerWidth / contentBrushWidth;
- 911 |   const fitScaleY = plotInnerHeight / contentBrushHeight;
- 912 |   const newScale = clamp(Math.min(fitScaleX, fitScaleY), ZOOM_MIN, ZOOM_MAX);
- 913 | 
- 914 |   const rawX = -contentX0 * newScale;
- 915 |   const rawY = -contentY0 * newScale;
- 916 | 
- 917 |   return clampTransform(
- 918 |     { scale: newScale, x: rawX, y: rawY },
- 919 |     plotInnerWidth,
- 920 |     plotInnerHeight,
- 921 |   );
- 922 | }
- 923 | 
- 924 | function formatTick(value) {
- 925 |   if (Number.isInteger(value)) return String(value);
- 926 |   return parseFloat(Number(value).toPrecision(4)).toString();
- 927 | }
- 928 | 
- 929 | export default RechartsPlotter;
- 930 | 
+ 819 |       dragRef.current = createInitialDragState();
+ 820 |       event.currentTarget.releasePointerCapture?.(event.pointerId);
+ 821 |     },
+ 822 |     [brushRect, transform, innerWidth, innerHeight],
+ 823 |   );
+ 824 | 
+ 825 |   useEffect(() => {
+ 826 |     console.log("[RechartsPlotter] point stats", renderStats);
+ 827 |   }, [renderStats]);
+ 828 | 
+ 829 |   useEffect(() => {
+ 830 |     return () => {
+ 831 |       if (rafIdRef.current) {
+ 832 |         cancelAnimationFrame(rafIdRef.current);
+ 833 |         rafIdRef.current = null;
+ 834 |       }
+ 835 |       dragRef.current = createInitialDragState();
+ 836 |       brushStartRef.current = null;
+ 837 |       cachedScalesRef.current = { key: null, xScale: null, yScale: null };
+ 838 |       pendingTransformRef.current = null;
+ 839 |     };
+ 840 |   }, []);
+ 841 | 
+ 842 |   useEffect(() => {
+ 843 |     const svgElement = svgRef.current;
+ 844 | 
+ 845 |     if (!svgElement) return;
+ 846 | 
+ 847 |     const wheelHandler = (event) => {
+ 848 |       event.preventDefault();
+ 849 |       handleWheel(event);
+ 850 |     };
+ 851 | 
+ 852 |     svgElement.addEventListener("wheel", wheelHandler, {
+ 853 |       passive: false,
+ 854 |     });
+ 855 | 
+ 856 |     return () => {
+ 857 |       svgElement.removeEventListener("wheel", wheelHandler);
+ 858 |     };
+ 859 |   }, [handleWheel]);
+ 860 | 
+ 861 |   const handleDoubleClick = useCallback(() => {
+ 862 |     logChartInteractionEvent({
+ 863 |       interactionType: "RESET",
+ 864 |       visualizationLibrary: "Recharts",
+ 865 |       interactionSource: "double_click",
+ 866 |     });
+ 867 |     setTransform({ scale: 1, x: 0, y: 0 });
+ 868 |     setHoveredPoint(null);
+ 869 |   }, []);
+ 870 | 
+ 871 |   const stageCursor = isPanMode
+ 872 |     ? isDragging
+ 873 |       ? "grabbing"
+ 874 |       : "grab"
+ 875 |     : "crosshair";
+ 876 | 
+ 877 |   const contentTransform = `translate(${transform.x}, ${transform.y}) scale(${transform.scale})`;
+ 878 |   return (
+ 879 |     <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
+ 880 |       {enableCanvas ? (
+ 881 |         <ImageCanvasLayer
+ 882 |           points={visiblePointsForRender}
+ 883 |           baseXScale={baseXScale}
+ 884 |           baseYScale={baseYScale}
+ 885 |           cellSize={adaptiveCellSizeForRender}
+ 886 |           transform={transform}
+ 887 |           imageCount={effectiveImageCountForRender}
+ 888 |         />
+ 889 |       ) : (
+ 890 |         <svg
+ 891 |           width={containerWidth}
+ 892 |           height={height}
+ 893 |           style={{
+ 894 |             position: "absolute",
+ 895 |             top: 0,
+ 896 |             left: 0,
+ 897 |             pointerEvents: "none",
+ 898 |           }}
+ 899 |         >
+ 900 |           <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
+ 901 |             <SvgImageLayer
+ 902 |               points={visiblePointsForRender}
+ 903 |               baseXScale={baseXScale}
+ 904 |               baseYScale={baseYScale}
+ 905 |               cellSize={adaptiveCellSizeForRender}
+ 906 |               transform={transform}
+ 907 |               imageCount={effectiveImageCountForRender}
+ 908 |             />
+ 909 |           </g>
+ 910 |         </svg>
+ 911 |       )}
+ 912 |       <ControlsLayer
+ 913 |         zoomLevel={transform.scale}
+ 914 |         onZoomIn={handleZoomIn}
+ 915 |         onZoomOut={handleZoomOut}
+ 916 |         onReset={handleReset}
+ 917 |         interactionMode={interactionMode}
+ 918 |         onModeChange={setInteractionMode}
+ 919 |       />
+ 920 | 
+ 921 |       <svg
+ 922 |         ref={svgRef}
+ 923 |         width={containerWidth}
+ 924 |         height={height}
+ 925 |         style={{
+ 926 |           display: "block",
+ 927 |           touchAction: "none",
+ 928 |           userSelect: "none",
+ 929 |           cursor: stageCursor,
+ 930 |         }}
+ 931 |         onPointerDown={handlePointerDown}
+ 932 |         onPointerMove={handlePointerMove}
+ 933 |         onPointerUp={handlePointerUp}
+ 934 |         onPointerLeave={handlePointerUp}
+ 935 |         onPointerCancel={handlePointerUp}
+ 936 |         onDoubleClick={handleDoubleClick}
+ 937 |       >
+ 938 |         <defs>
+ 939 |           <clipPath id={clipId}>
+ 940 |             <rect
+ 941 |               x={PLOT_MARGIN.left}
+ 942 |               y={PLOT_MARGIN.top}
+ 943 |               width={innerWidth}
+ 944 |               height={innerHeight}
+ 945 |             />
+ 946 |           </clipPath>
+ 947 |         </defs>
+ 948 | 
+ 949 |         <rect
+ 950 |           x={0}
+ 951 |           y={0}
+ 952 |           width={containerWidth}
+ 953 |           height={height}
+ 954 |           fill="#16213e"
+ 955 |         />
+ 956 | 
+ 957 |         <g transform={`translate(${PLOT_MARGIN.left},${PLOT_MARGIN.top})`}>
+ 958 |           <rect
+ 959 |             x={0}
+ 960 |             y={0}
+ 961 |             width={innerWidth}
+ 962 |             height={innerHeight}
+ 963 |             fill="#16213e"
+ 964 |           />
+ 965 | 
+ 966 |           <AxisGrid {...axisProps} />
+ 967 | 
+ 968 |           <AxisLabels {...axisProps} />
+ 969 | 
+ 970 |           <g clipPath={`url(#${clipId})`}>
+ 971 |             <g transform={contentTransform}></g>
+ 972 |           </g>
+ 973 | 
+ 974 |           <rect
+ 975 |             x={0}
+ 976 |             y={0}
+ 977 |             width={innerWidth}
+ 978 |             height={innerHeight}
+ 979 |             fill="transparent"
+ 980 |             stroke="#555"
+ 981 |             pointerEvents="none"
+ 982 |           />
+ 983 | 
+ 984 |           {brushRect && brushRect.width > 0 && brushRect.height > 0 && (
+ 985 |             <rect
+ 986 |               x={brushRect.x}
+ 987 |               y={brushRect.y}
+ 988 |               width={brushRect.width}
+ 989 |               height={brushRect.height}
+ 990 |               fill={BRUSH_FILL}
+ 991 |               stroke={BRUSH_STROKE}
+ 992 |               strokeWidth={BRUSH_STROKE_WIDTH}
+ 993 |               rx={2}
+ 994 |               ry={2}
+ 995 |               pointerEvents="none"
+ 996 |             />
+ 997 |           )}
+ 998 |         </g>
+ 999 |       </svg>
+1000 |       <TooltipOverlay
+```
+
+### Chunk 6/7
+
+```jsx
+1001 |         hoveredPoint={hoveredPoint}
+1002 |         tooltipRef={tooltipRef}
+1003 |         position={tooltipPosition}
+1004 |       />
+1005 |     </div>
+1006 |   );
+1007 | }
+1008 | 
+1009 | const AxisGrid = memo(function AxisGrid({
+1010 |   xTicks,
+1011 |   yTicks,
+1012 |   xTickScale,
+1013 |   yTickScale,
+1014 |   innerWidth,
+1015 |   innerHeight,
+1016 | }) {
+1017 |   return (
+1018 |     <>
+1019 |       {xTicks.map((tick, index) => {
+1020 |         const x = xTickScale(tick);
+1021 |         return (
+1022 |           <line
+1023 |             key={`xgrid-${index}`}
+1024 |             x1={x}
+1025 |             y1={0}
+1026 |             x2={x}
+1027 |             y2={innerHeight}
+1028 |             stroke="#2a2a3e"
+1029 |             strokeDasharray="3 3"
+1030 |           />
+1031 |         );
+1032 |       })}
+1033 | 
+1034 |       {yTicks.map((tick, index) => {
+1035 |         const y = yTickScale(tick);
+1036 |         return (
+1037 |           <line
+1038 |             key={`ygrid-${index}`}
+1039 |             x1={0}
+1040 |             y1={y}
+1041 |             x2={innerWidth}
+1042 |             y2={y}
+1043 |             stroke="#2a2a3e"
+1044 |             strokeDasharray="3 3"
+1045 |           />
+1046 |         );
+1047 |       })}
+1048 |     </>
+1049 |   );
+1050 | });
+1051 | 
+1052 | const AxisLabels = memo(function AxisLabels({
+1053 |   xTicks,
+1054 |   yTicks,
+1055 |   xTickScale,
+1056 |   yTickScale,
+1057 |   innerHeight,
+1058 | }) {
+1059 |   return (
+1060 |     <>
+1061 |       {xTicks.map((tick, index) => {
+1062 |         const x = xTickScale(tick);
+1063 |         return (
+1064 |           <text
+1065 |             key={`xlabel-${index}`}
+1066 |             x={x}
+1067 |             y={innerHeight + 18}
+1068 |             fill="#888"
+1069 |             fontSize="11"
+1070 |             textAnchor="middle"
+1071 |           >
+1072 |             {formatTick(tick)}
+1073 |           </text>
+1074 |         );
+1075 |       })}
+1076 | 
+1077 |       {yTicks.map((tick, index) => {
+1078 |         const y = yTickScale(tick);
+1079 |         return (
+1080 |           <text
+1081 |             key={`ylabel-${index}`}
+1082 |             x={-8}
+1083 |             y={y + 4}
+1084 |             fill="#888"
+1085 |             fontSize="11"
+1086 |             textAnchor="end"
+1087 |           >
+1088 |             {formatTick(tick)}
+1089 |           </text>
+1090 |         );
+1091 |       })}
+1092 |     </>
+1093 |   );
+1094 | });
+1095 | 
+1096 | function extentWithPaddingFromPoints(points, accessor) {
+1097 |   if (!points.length) return [0, 1];
+1098 | 
+1099 |   let min = Infinity;
+1100 |   let max = -Infinity;
+1101 | 
+1102 |   for (const point of points) {
+1103 |     const value = accessor(point);
+1104 | 
+1105 |     if (value < min) min = value;
+1106 |     if (value > max) max = value;
+1107 |   }
+1108 | 
+1109 |   const span = max - min;
+1110 |   const pad = span === 0 ? 5 : Math.max(span * 0.18, 1);
+1111 | 
+1112 |   return [min - pad, max + pad];
+1113 | }
+1114 | 
+1115 | function computeVisibleDomain(
+1116 |   xExtent,
+1117 |   yExtent,
+1118 |   transform,
+1119 |   innerWidth,
+1120 |   innerHeight,
+1121 | ) {
+1122 |   const domainWidth = xExtent[1] - xExtent[0];
+1123 |   const domainHeight = yExtent[1] - yExtent[0];
+1124 | 
+1125 |   const xMin =
+1126 |     xExtent[0] - (transform.x / transform.scale / innerWidth) * domainWidth;
+1127 |   const xMax = xMin + domainWidth / transform.scale;
+1128 | 
+1129 |   const yMax =
+1130 |     yExtent[1] + (transform.y / transform.scale / innerHeight) * domainHeight;
+1131 |   const yMin = yMax - domainHeight / transform.scale;
+1132 | 
+1133 |   return { xMin, xMax, yMin, yMax };
+1134 | }
+1135 | 
+1136 | function clampTransform(transform, innerWidth, innerHeight) {
+1137 |   const scale = transform.scale;
+1138 | 
+1139 |   if (scale <= MIN_ZOOM_SCALE) {
+1140 |     return { scale: 1, x: 0, y: 0 };
+1141 |   }
+1142 | 
+1143 |   const scaledWidth = innerWidth * scale;
+1144 |   const scaledHeight = innerHeight * scale;
+1145 | 
+1146 |   let x = transform.x;
+1147 |   let y = transform.y;
+1148 | 
+1149 |   if (scaledWidth <= innerWidth) {
+1150 |     x = (innerWidth - scaledWidth) / 2;
+1151 |   } else {
+1152 |     x = Math.min(0, Math.max(innerWidth - scaledWidth, x));
+1153 |   }
+1154 | 
+1155 |   if (scaledHeight <= innerHeight) {
+1156 |     y = (innerHeight - scaledHeight) / 2;
+1157 |   } else {
+1158 |     y = Math.min(0, Math.max(innerHeight - scaledHeight, y));
+1159 |   }
+1160 | 
+1161 |   return { scale, x, y };
+1162 | }
+1163 | 
+1164 | function clamp(value, min, max) {
+1165 |   return Math.max(min, Math.min(max, value));
+1166 | }
+1167 | 
+1168 | function convertBrushToTransform(
+1169 |   brushPixelRect,
+1170 |   currentTransform,
+1171 |   plotInnerWidth,
+1172 |   plotInnerHeight,
+1173 | ) {
+1174 |   const contentX0 =
+1175 |     (brushPixelRect.x - currentTransform.x) / currentTransform.scale;
+1176 |   const contentY0 =
+1177 |     (brushPixelRect.y - currentTransform.y) / currentTransform.scale;
+1178 |   const contentBrushWidth = brushPixelRect.width / currentTransform.scale;
+1179 |   const contentBrushHeight = brushPixelRect.height / currentTransform.scale;
+1180 | 
+1181 |   const fitScaleX = plotInnerWidth / contentBrushWidth;
+1182 |   const fitScaleY = plotInnerHeight / contentBrushHeight;
+1183 |   const newScale = clamp(Math.min(fitScaleX, fitScaleY), ZOOM_MIN, ZOOM_MAX);
+1184 | 
+1185 |   if (newScale <= MIN_ZOOM_SCALE) {
+1186 |     return { scale: 1, x: 0, y: 0 };
+1187 |   }
+1188 | 
+1189 |   const rawX = -contentX0 * newScale;
+1190 |   const rawY = -contentY0 * newScale;
+1191 | 
+1192 |   return clampTransform(
+1193 |     { scale: newScale, x: rawX, y: rawY },
+1194 |     plotInnerWidth,
+1195 |     plotInnerHeight,
+1196 |   );
+1197 | }
+1198 | 
+1199 | function formatTick(value) {
+1200 |   if (Number.isInteger(value)) return String(value);
+```
+
+### Chunk 7/7
+
+```jsx
+1201 |   return parseFloat(Number(value).toPrecision(4)).toString();
+1202 | }
+1203 | 
+1204 | export default RechartsPlotter;
+1205 | 
 ```
 
 
@@ -5905,7 +7048,7 @@ imagdPlotting
 ---
 
 ## 📄 src\lib\chartViewportStore.js
-**hash:** `7a0ce23f`
+**hash:** `1630584`
 
 ### Chunk 1/1
 
@@ -5961,20 +7104,39 @@ imagdPlotting
   49 |   });
   50 | }
   51 | 
-  52 | /**
-  53 |  * CLEAR ALL
-  54 |  */
-  55 | export function clearViewportStore() {
-  56 |   viewportStore.clear();
-  57 | }
-  58 | 
+  52 | export function removeChartViewport(chartId) {
+  53 |   if (!chartId) return;
+  54 |   viewportStore.delete(chartId);
+  55 | }
+  56 | 
+  57 | export function retainOnlyChartViewports(activeChartIds) {
+  58 |   const activeSet = new Set(activeChartIds);
+  59 | 
+  60 |   for (const chartId of viewportStore.keys()) {
+  61 |     if (!activeSet.has(chartId)) {
+  62 |       viewportStore.delete(chartId);
+  63 |     }
+  64 |   }
+  65 | }
+  66 | 
+  67 | export function getViewportStoreSize() {
+  68 |   return viewportStore.size;
+  69 | }
+  70 | 
+  71 | /**
+  72 |  * CLEAR ALL
+  73 |  */
+  74 | export function clearViewportStore() {
+  75 |   viewportStore.clear();
+  76 | }
+  77 | 
 ```
 
 
 ---
 
 ## 📄 src\lib\constants.js
-**hash:** `141e78cb`
+**hash:** `6b86f257`
 
 ### Chunk 1/1
 
@@ -5990,60 +7152,256 @@ imagdPlotting
    9 | 
   10 | export const DISABLED_LIBRARIES = ["DeckGL", "ECharts"];
   11 | 
-  12 | /**
-  13 |  * Dynamic image count support.
-  14 |  * We no longer restrict to [1,2,4,8].
-  15 |  */
-  16 | export const MIN_IMAGES_PER_POINT = 1;
-  17 | export const MAX_IMAGES_PER_POINT = 8;
-  18 | 
-  19 | export const DATA_POINT_LIMITS = {
-  20 |   min: 1,
-  21 |   max: 1000,
-  22 |   defaultCount: 100,
-  23 | };
-  24 | 
-  25 | export const CELL_SIZE = 50;
-  26 | export const IMAGE_PADDING = 0.9;
-  27 | 
-  28 | export const ADAPTIVE_CELL_SIZE = {
-  29 |   max: 50,
-  30 |   min: 4,
-  31 |   gapRatio: 0.55,
-  32 |   collapseThreshold: 0,
-  33 | };
-  34 | 
-  35 | export const PLOT_DIMENSIONS = {
-  36 |   width: 900,
-  37 |   height: 600,
-  38 | };
-  39 | 
-  40 | export const PLOT_MARGIN = {
-  41 |   top: 20,
-  42 |   right: 20,
-  43 |   bottom: 40,
-  44 |   left: 50,
-  45 | };
-  46 | 
-  47 | export const DATA_URL = "/data/data.json";
-  48 | 
-  49 | export const BRUSH_ZOOM = {
-  50 |   fill: "rgba(68, 147, 255, 0.15)",
-  51 |   stroke: "#4493ff",
-  52 |   strokeWidth: 1.5,
-  53 |   minimumSelectionPixels: 5,
-  54 | };
+  12 | export const MIN_IMAGES_PER_POINT = 1;
+  13 | export const MAX_IMAGES_PER_POINT = 8;
+  14 | 
+  15 | export const DATA_POINT_LIMITS = {
+  16 |   min: 1,
+  17 |   max: 1000,
+  18 |   defaultCount: 100,
+  19 | };
+  20 | 
+  21 | export const CELL_SIZE = 50;
+  22 | export const IMAGE_PADDING = 0.9;
+  23 | 
+  24 | export const ADAPTIVE_CELL_SIZE = {
+  25 |   max: 50,
+  26 |   min: 4,
+  27 |   gapRatio: 0.55,
+  28 |   collapseThreshold: 0,
+  29 | };
+  30 | 
+  31 | export const PLOT_DIMENSIONS = {
+  32 |   width: 900,
+  33 |   height: 600,
+  34 | };
+  35 | 
+  36 | export const PLOT_MARGIN = {
+  37 |   top: 20,
+  38 |   right: 20,
+  39 |   bottom: 40,
+  40 |   left: 50,
+  41 | };
+  42 | 
+  43 | export const DATA_URL = "/data/data.json";
+  44 | 
+  45 | export const BRUSH_ZOOM = {
+  46 |   fill: "rgba(68, 147, 255, 0.15)",
+  47 |   stroke: "#4493ff",
+  48 |   strokeWidth: 1.5,
+  49 |   minimumSelectionPixels: 5,
+  50 | };
+  51 | 
+  52 | export const ZOOM_SCALE_FACTOR = 1.5;
+  53 | 
+  54 | export const WHEEL_ZOOM_SENSITIVITY = 0.002;
   55 | 
-  56 | export const ZOOM_SCALE_FACTOR = 1.5;
+  56 | export const MAX_RENDER_IMAGES = 50000;
   57 | 
-  58 | export const WHEEL_ZOOM_SENSITIVITY = 0.002;
-  59 | 
-  60 | /**
-  61 |  * Prevent browser crashes.
-  62 |  * 1000 x 1000 = 1,000,000 rendered images.
-  63 |  */
-  64 | export const MAX_RENDER_IMAGES = 50000;
+```
+
+
+---
+
+## 📄 src\lib\debouncedHooks.js
+**hash:** `3e30c2ae`
+
+### Chunk 1/1
+
+```javascript
+   1 | /**
+   2 |  * Custom hook for debounced state updates
+   3 |  * Reduces render frequency during rapid interactions (pan, zoom, hover)
+   4 |  * Returns [state, setState, flush] where flush forces immediate update
+   5 |  */
+   6 | 
+   7 | import { useCallback, useRef, useEffect, useState } from "react";
+   8 | 
+   9 | export function useDebouncedState(initialValue, delay = 50) {
+  10 |   const [state, setState] = useState(initialValue);
+  11 |   const timeoutRef = useRef(null);
+  12 |   const pendingRef = useRef(null);
+  13 | 
+  14 |   const setDebouncedState = useCallback(
+  15 |     (newValue) => {
+  16 |       // Store pending value
+  17 |       pendingRef.current = newValue;
+  18 | 
+  19 |       // Clear existing timeout
+  20 |       if (timeoutRef.current) {
+  21 |         clearTimeout(timeoutRef.current);
+  22 |       }
+  23 | 
+  24 |       // Set new timeout
+  25 |       timeoutRef.current = setTimeout(() => {
+  26 |         if (pendingRef.current !== null) {
+  27 |           setState(pendingRef.current);
+  28 |           pendingRef.current = null;
+  29 |           timeoutRef.current = null;
+  30 |         }
+  31 |       }, delay);
+  32 |     },
+  33 |     [delay],
+  34 |   );
+  35 | 
+  36 |   /**
+  37 |    * Force immediate flush of pending state
+  38 |    */
+  39 |   const flush = useCallback(() => {
+  40 |     if (timeoutRef.current) {
+  41 |       clearTimeout(timeoutRef.current);
+  42 |       timeoutRef.current = null;
+  43 |     }
+  44 | 
+  45 |     if (pendingRef.current !== null) {
+  46 |       setState(pendingRef.current);
+  47 |       pendingRef.current = null;
+  48 |     }
+  49 |   }, []);
+  50 | 
+  51 |   /**
+  52 |    * Cleanup on unmount
+  53 |    */
+  54 |   useEffect(() => {
+  55 |     return () => {
+  56 |       if (timeoutRef.current) {
+  57 |         clearTimeout(timeoutRef.current);
+  58 |         timeoutRef.current = null;
+  59 |       }
+  60 |     };
+  61 |   }, []);
+  62 | 
+  63 |   return [state, setDebouncedState, flush];
+  64 | }
   65 | 
+  66 | /**
+  67 |  * Custom hook for debounced callbacks
+  68 |  * Prevents callback from being called too frequently
+  69 |  */
+  70 | export function useDebouncedCallback(callback, delay = 50) {
+  71 |   const timeoutRef = useRef(null);
+  72 |   const callbackRef = useRef(callback);
+  73 | 
+  74 |   // Update callback ref when callback changes
+  75 |   useEffect(() => {
+  76 |     callbackRef.current = callback;
+  77 |   }, [callback]);
+  78 | 
+  79 |   const debouncedCallback = useCallback(
+  80 |     (...args) => {
+  81 |       if (timeoutRef.current) {
+  82 |         clearTimeout(timeoutRef.current);
+  83 |       }
+  84 | 
+  85 |       timeoutRef.current = setTimeout(() => {
+  86 |         callbackRef.current(...args);
+  87 |         timeoutRef.current = null;
+  88 |       }, delay);
+  89 |     },
+  90 |     [delay],
+  91 |   );
+  92 | 
+  93 |   /**
+  94 |    * Cleanup on unmount
+  95 |    */
+  96 |   useEffect(() => {
+  97 |     return () => {
+  98 |       if (timeoutRef.current) {
+  99 |         clearTimeout(timeoutRef.current);
+ 100 |         timeoutRef.current = null;
+ 101 |       }
+ 102 |     };
+ 103 |   }, []);
+ 104 | 
+ 105 |   return debouncedCallback;
+ 106 | }
+ 107 | 
+ 108 | /**
+ 109 |  * Custom hook for throttled callbacks
+ 110 |  * Calls callback at most once every `interval` milliseconds
+ 111 |  */
+ 112 | export function useThrottledCallback(callback, interval = 50) {
+ 113 |   const timeoutRef = useRef(null);
+ 114 |   const lastCallRef = useRef(0);
+ 115 |   const callbackRef = useRef(callback);
+ 116 | 
+ 117 |   // Update callback ref when callback changes
+ 118 |   useEffect(() => {
+ 119 |     callbackRef.current = callback;
+ 120 |   }, [callback]);
+ 121 | 
+ 122 |   const throttledCallback = useCallback(
+ 123 |     (...args) => {
+ 124 |       const now = Date.now();
+ 125 |       const timeSinceLastCall = now - lastCallRef.current;
+ 126 | 
+ 127 |       const execute = () => {
+ 128 |         lastCallRef.current = Date.now();
+ 129 |         callbackRef.current(...args);
+ 130 |       };
+ 131 | 
+ 132 |       if (timeSinceLastCall >= interval) {
+ 133 |         execute();
+ 134 |       } else {
+ 135 |         if (timeoutRef.current) {
+ 136 |           clearTimeout(timeoutRef.current);
+ 137 |         }
+ 138 | 
+ 139 |         timeoutRef.current = setTimeout(execute, interval - timeSinceLastCall);
+ 140 |       }
+ 141 |     },
+ 142 |     [interval],
+ 143 |   );
+ 144 | 
+ 145 |   /**
+ 146 |    * Cleanup on unmount
+ 147 |    */
+ 148 |   useEffect(() => {
+ 149 |     return () => {
+ 150 |       if (timeoutRef.current) {
+ 151 |         clearTimeout(timeoutRef.current);
+ 152 |         timeoutRef.current = null;
+ 153 |       }
+ 154 |     };
+ 155 |   }, []);
+ 156 | 
+ 157 |   return throttledCallback;
+ 158 | }
+ 159 | 
+ 160 | /**
+ 161 |  * Custom hook for interaction debouncing
+ 162 |  * Specific hook for zoom/pan interactions to reduce render churn
+ 163 |  */
+ 164 | export function useInteractionDebounce(delay = 40) {
+ 165 |   const [isInteracting, setIsInteracting] = useState(false);
+ 166 |   const timeoutRef = useRef(null);
+ 167 | 
+ 168 |   const startInteraction = useCallback(() => {
+ 169 |     if (!isInteracting) {
+ 170 |       setIsInteracting(true);
+ 171 |     }
+ 172 | 
+ 173 |     if (timeoutRef.current) {
+ 174 |       clearTimeout(timeoutRef.current);
+ 175 |     }
+ 176 | 
+ 177 |     timeoutRef.current = setTimeout(() => {
+ 178 |       setIsInteracting(false);
+ 179 |       timeoutRef.current = null;
+ 180 |     }, delay);
+ 181 |   }, [isInteracting, delay]);
+ 182 | 
+ 183 |   useEffect(() => {
+ 184 |     return () => {
+ 185 |       if (timeoutRef.current) {
+ 186 |         clearTimeout(timeoutRef.current);
+ 187 |       }
+ 188 |     };
+ 189 |   }, []);
+ 190 | 
+ 191 |   return { isInteracting, startInteraction };
+ 192 | }
+ 193 | 
 ```
 
 
@@ -6409,54 +7767,80 @@ imagdPlotting
 
 ---
 
-## 📄 src\lib\imageCache.js
-**hash:** `673eb4cc`
+## 📄 src\lib\imageBitmapCache.js
+**hash:** `5a68c25c`
 
 ### Chunk 1/1
 
 ```javascript
-   1 | const imageCache = new Map();
+   1 | // src/lib/imageBitmapCache.js
    2 | 
-   3 | /**
-   4 |  * Preloads image sources.
-   5 |  */
-   6 | export async function preloadImageSources(imageSourceList) {
-   7 |   const uniqueSources = [...new Set(imageSourceList)];
-   8 | 
-   9 |   const loadPromises = uniqueSources.map((source) => {
-  10 |     if (imageCache.has(source)) {
-  11 |       return Promise.resolve(imageCache.get(source));
-  12 |     }
+   3 | // Shared across ALL chart instances
+   4 | const cache = new Map(); // url -> ImageBitmap
+   5 | const pending = new Map(); // url -> Promise<ImageBitmap>
+   6 | 
+   7 | // Thumbnail cache (LoD)
+   8 | const thumbCache = new Map();
+   9 | 
+  10 | // Config
+  11 | const LOD_THUMB_SIZE = 32;
+  12 | const LOD_THRESHOLD = 24;
   13 | 
-  14 |     return new Promise((resolve) => {
-  15 |       const image = new window.Image();
-  16 | 
-  17 |       image.crossOrigin = "anonymous";
+  14 | // ---- Full bitmap loader ----
+  15 | export async function getImageBitmap(url) {
+  16 |   if (cache.has(url)) return cache.get(url);
+  17 |   if (pending.has(url)) return pending.get(url);
   18 | 
-  19 |       image.src = source;
-  20 | 
-  21 |       image.onload = () => {
-  22 |         imageCache.set(source, image);
-  23 | 
-  24 |         resolve(image);
-  25 |       };
-  26 | 
-  27 |       image.onerror = () => {
-  28 |         resolve(null);
-  29 |       };
+  19 |   const promise = fetch(url)
+  20 |     .then((r) => r.blob())
+  21 |     .then((blob) => createImageBitmap(blob))
+  22 |     .then((bitmap) => {
+  23 |       cache.set(url, bitmap);
+  24 |       pending.delete(url);
+  25 |       return bitmap;
+  26 |     })
+  27 |     .catch((err) => {
+  28 |       pending.delete(url);
+  29 |       throw err;
   30 |     });
-  31 |   });
-  32 | 
-  33 |   return Promise.all(loadPromises);
+  31 | 
+  32 |   pending.set(url, promise);
+  33 |   return promise;
   34 | }
   35 | 
-  36 | /**
-  37 |  * Returns cached image.
-  38 |  */
-  39 | export function getCachedImageObject(source) {
-  40 |   return imageCache.get(source);
-  41 | }
+  36 | // ---- LoD loader ----
+  37 | export async function getImageBitmapLoD(url, cellSizePx) {
+  38 |   const useThumb = cellSizePx < LOD_THRESHOLD;
+  39 | 
+  40 |   if (useThumb) {
+  41 |     if (thumbCache.has(url)) return thumbCache.get(url);
   42 | 
+  43 |     const full = await getImageBitmap(url);
+  44 | 
+  45 |     const oc = new OffscreenCanvas(LOD_THUMB_SIZE, LOD_THUMB_SIZE);
+  46 |     const ctx = oc.getContext("2d");
+  47 |     ctx.drawImage(full, 0, 0, LOD_THUMB_SIZE, LOD_THUMB_SIZE);
+  48 | 
+  49 |     const thumb = await createImageBitmap(oc);
+  50 |     thumbCache.set(url, thumb);
+  51 |     return thumb;
+  52 |   }
+  53 | 
+  54 |   return getImageBitmap(url);
+  55 | }
+  56 | 
+  57 | // ---- Cleanup ----
+  58 | export function clearImageBitmapCache() {
+  59 |   for (const bmp of cache.values()) bmp.close();
+  60 |   cache.clear();
+  61 |   pending.clear();
+  62 | }
+  63 | 
+  64 | export function clearThumbCache() {
+  65 |   for (const bmp of thumbCache.values()) bmp.close();
+  66 |   thumbCache.clear();
+  67 | }
+  68 | 
 ```
 
 
@@ -6513,47 +7897,324 @@ imagdPlotting
 ---
 
 ## 📄 src\lib\plotterData.js
-**hash:** `216f438d`
+**hash:** `4ce7cddd`
 
 ### Chunk 1/1
 
 ```javascript
    1 | import { useState, useEffect } from "react";
-   2 | import { DATA_URL } from "./constants";
-   3 | 
-   4 | export function usePlotterData() {
-   5 |   const [plotterPoints, setPlotterPoints] = useState([]);
-   6 |   const [isLoading, setIsLoading] = useState(true);
-   7 |   const [loadError, setLoadError] = useState(null);
-   8 | 
-   9 |   useEffect(() => {
-  10 |     fetch(DATA_URL)
-  11 |       .then((response) => {
-  12 |         if (!response.ok) {
-  13 |           throw new Error(`Failed to fetch data: ${response.status}`);
-  14 |         }
-  15 |         return response.json();
-  16 |       })
-  17 |       .then((jsonData) => {
-  18 |         setPlotterPoints(jsonData);
-  19 |         setIsLoading(false);
-  20 |       })
-  21 |       .catch((fetchError) => {
-  22 |         setLoadError(fetchError.message);
-  23 |         setIsLoading(false);
-  24 |       });
-  25 |   }, []);
-  26 | 
-  27 |   return { plotterPoints, isLoading, loadError };
-  28 | }
-  29 | 
+   2 | 
+   3 | import { DATA_URL, DATA_POINT_LIMITS } from "./constants";
+   4 | 
+   5 | export function usePlotterData() {
+   6 |   const [plotterPoints, setPlotterPoints] = useState([]);
+   7 | 
+   8 |   const [isLoading, setIsLoading] = useState(true);
+   9 | 
+  10 |   const [loadError, setLoadError] = useState(null);
+  11 | 
+  12 |   useEffect(() => {
+  13 |     // eslint-disable-next-line react-hooks/immutability
+  14 |     fetchPlotterData();
+  15 |   }, []);
+  16 | 
+  17 |   const fetchPlotterData = async () => {
+  18 |     try {
+  19 |       setIsLoading(true);
+  20 | 
+  21 |       setLoadError(null);
+  22 | 
+  23 |       const response = await fetch(DATA_URL);
+  24 | 
+  25 |       if (!response.ok) {
+  26 |         throw new Error(`Failed to fetch data: ${response.status}`);
+  27 |       }
+  28 | 
+  29 |       const jsonData = await response.json();
+  30 | 
+  31 |       /**
+  32 |        * Hard safety limit.
+  33 |        */
+  34 |       const limitedData = Array.isArray(jsonData)
+  35 |         ? jsonData.slice(0, DATA_POINT_LIMITS.max)
+  36 |         : [];
+  37 | 
+  38 |       setPlotterPoints(limitedData);
+  39 |     } catch (fetchError) {
+  40 |       setLoadError(fetchError.message);
+  41 |     } finally {
+  42 |       setIsLoading(false);
+  43 |     }
+  44 |   };
+  45 | 
+  46 |   return {
+  47 |     plotterPoints,
+  48 |     isLoading,
+  49 |     loadError,
+  50 |   };
+  51 | }
+  52 | 
+```
+
+
+---
+
+## 📄 src\lib\quadtree.js
+**hash:** `6e9e5682`
+
+### Chunk 1/2
+
+```javascript
+   1 | /**
+   2 |  * Quadtree spatial index for efficient point culling and nearest-neighbor queries
+   3 |  * Provides O(log n) lookup time instead of O(n) linear filtering
+   4 |  */
+   5 | 
+   6 | export class Quadtree {
+   7 |   constructor(bounds, maxPoints = 8, maxDepth = 8, depth = 0) {
+   8 |     this.bounds = bounds; // { x, y, width, height }
+   9 |     this.maxPoints = maxPoints; // Max points before subdivision
+  10 |     this.maxDepth = maxDepth;
+  11 |     this.depth = depth;
+  12 |     this.points = [];
+  13 |     this.divided = false;
+  14 |     this.children = null;
+  15 |   }
+  16 | 
+  17 |   /**
+  18 |    * Insert a point into the quadtree
+  19 |    */
+  20 |   insert(point) {
+  21 |     if (!this.contains(point)) {
+  22 |       return false;
+  23 |     }
+  24 | 
+  25 |     if (this.points.length < this.maxPoints && !this.divided) {
+  26 |       this.points.push(point);
+  27 |       return true;
+  28 |     } else {
+  29 |       if (!this.divided) {
+  30 |         this.subdivide();
+  31 |       }
+  32 | 
+  33 |       for (let child of this.children) {
+  34 |         if (child.insert(point)) {
+  35 |           return true;
+  36 |         }
+  37 |       }
+  38 |     }
+  39 |     return false;
+  40 |   }
+  41 | 
+  42 |   /**
+  43 |    * Subdivide quadtree into 4 children
+  44 |    */
+  45 |   subdivide() {
+  46 |     const { x, y, width, height } = this.bounds;
+  47 |     const halfW = width / 2;
+  48 |     const halfH = height / 2;
+  49 | 
+  50 |     this.children = [
+  51 |       // NE
+  52 |       new Quadtree(
+  53 |         { x: x + halfW, y, width: halfW, height: halfH },
+  54 |         this.maxPoints,
+  55 |         this.maxDepth,
+  56 |         this.depth + 1,
+  57 |       ),
+  58 |       // NW
+  59 |       new Quadtree(
+  60 |         { x, y, width: halfW, height: halfH },
+  61 |         this.maxPoints,
+  62 |         this.maxDepth,
+  63 |         this.depth + 1,
+  64 |       ),
+  65 |       // SE
+  66 |       new Quadtree(
+  67 |         { x: x + halfW, y: y + halfH, width: halfW, height: halfH },
+  68 |         this.maxPoints,
+  69 |         this.maxDepth,
+  70 |         this.depth + 1,
+  71 |       ),
+  72 |       // SW
+  73 |       new Quadtree(
+  74 |         { x, y: y + halfH, width: halfW, height: halfH },
+  75 |         this.maxPoints,
+  76 |         this.maxDepth,
+  77 |         this.depth + 1,
+  78 |       ),
+  79 |     ];
+  80 | 
+  81 |     this.divided = true;
+  82 | 
+  83 |     // Redistribute existing points to children
+  84 |     for (let p of this.points) {
+  85 |       for (let child of this.children) {
+  86 |         if (child.insert(p)) break;
+  87 |       }
+  88 |     }
+  89 | 
+  90 |     this.points = [];
+  91 |   }
+  92 | 
+  93 |   /**
+  94 |    * Check if point is within bounds
+  95 |    */
+  96 |   contains(point) {
+  97 |     const { x, y, width, height } = this.bounds;
+  98 |     return (
+  99 |       point.scaledX >= x &&
+ 100 |       point.scaledX < x + width &&
+ 101 |       point.scaledY >= y &&
+ 102 |       point.scaledY < y + height
+ 103 |     );
+ 104 |   }
+ 105 | 
+ 106 |   /**
+ 107 |    * Query points within a rectangular region (viewport)
+ 108 |    * Returns array of points intersecting the query bounds
+ 109 |    */
+ 110 |   query(queryBounds, found = []) {
+ 111 |     if (!this.intersects(queryBounds)) {
+ 112 |       return found;
+ 113 |     }
+ 114 | 
+ 115 |     for (let p of this.points) {
+ 116 |       if (this.pointInBounds(p, queryBounds)) {
+ 117 |         found.push(p);
+ 118 |       }
+ 119 |     }
+ 120 | 
+ 121 |     if (this.divided) {
+ 122 |       for (let child of this.children) {
+ 123 |         child.query(queryBounds, found);
+ 124 |       }
+ 125 |     }
+ 126 | 
+ 127 |     return found;
+ 128 |   }
+ 129 | 
+ 130 |   /**
+ 131 |    * Check if query bounds intersects with this node's bounds
+ 132 |    */
+ 133 |   intersects(queryBounds) {
+ 134 |     const { x, y, width, height } = this.bounds;
+ 135 |     const { minX, minY, maxX, maxY } = queryBounds;
+ 136 | 
+ 137 |     return !(maxX < x || minX > x + width || maxY < y || minY > y + height);
+ 138 |   }
+ 139 | 
+ 140 |   /**
+ 141 |    * Check if point is within query bounds
+ 142 |    */
+ 143 |   pointInBounds(point, bounds) {
+ 144 |     const { minX, minY, maxX, maxY } = bounds;
+ 145 |     return (
+ 146 |       point.scaledX >= minX &&
+ 147 |       point.scaledX <= maxX &&
+ 148 |       point.scaledY >= minY &&
+ 149 |       point.scaledY <= maxY
+ 150 |     );
+ 151 |   }
+ 152 | 
+ 153 |   /**
+ 154 |    * Clear all points from tree (for rebuilding)
+ 155 |    */
+ 156 |   clear() {
+ 157 |     this.points = [];
+ 158 |     this.divided = false;
+ 159 |     this.children = null;
+ 160 |   }
+ 161 | 
+ 162 |   /**
+ 163 |    * Get statistics about tree structure
+ 164 |    */
+ 165 |   stats() {
+ 166 |     let nodeCount = 1;
+ 167 |     let pointCount = this.points.length;
+ 168 | 
+ 169 |     if (this.divided) {
+ 170 |       for (let child of this.children) {
+ 171 |         const childStats = child.stats();
+ 172 |         nodeCount += childStats.nodeCount;
+ 173 |         pointCount += childStats.pointCount;
+ 174 |       }
+ 175 |     }
+ 176 | 
+ 177 |     return { nodeCount, pointCount, depth: this.depth };
+ 178 |   }
+ 179 | }
+ 180 | 
+ 181 | /**
+ 182 |  * Build a quadtree from a list of normalized points
+ 183 |  */
+ 184 | export function buildQuadtree(normalizedPoints) {
+ 185 |   if (!normalizedPoints || normalizedPoints.length === 0) {
+ 186 |     return new Quadtree({ x: 0, y: 0, width: 1000, height: 1000 });
+ 187 |   }
+ 188 | 
+ 189 |   // Find bounds of all points
+ 190 |   let minX = Infinity;
+ 191 |   let minY = Infinity;
+ 192 |   let maxX = -Infinity;
+ 193 |   let maxY = -Infinity;
+ 194 | 
+ 195 |   for (const point of normalizedPoints) {
+ 196 |     if (point.scaledX < minX) minX = point.scaledX;
+ 197 |     if (point.scaledX > maxX) maxX = point.scaledX;
+ 198 |     if (point.scaledY < minY) minY = point.scaledY;
+ 199 |     if (point.scaledY > maxY) maxY = point.scaledY;
+ 200 |   }
+```
+
+### Chunk 2/2
+
+```javascript
+ 201 | 
+ 202 |   // Add padding to bounds
+ 203 |   const padding = 50;
+ 204 |   const bounds = {
+ 205 |     x: minX - padding,
+ 206 |     y: minY - padding,
+ 207 |     width: maxX - minX + padding * 2,
+ 208 |     height: maxY - minY + padding * 2,
+ 209 |   };
+ 210 | 
+ 211 |   const quadtree = new Quadtree(bounds, 8, 8);
+ 212 | 
+ 213 |   for (const point of normalizedPoints) {
+ 214 |     quadtree.insert(point);
+ 215 |   }
+ 216 | 
+ 217 |   return quadtree;
+ 218 | }
+ 219 | 
+ 220 | /**
+ 221 |  * Query visible points using quadtree
+ 222 |  * Much faster than linear filtering for large datasets
+ 223 |  */
+ 224 | export function queryVisiblePointsQuadtree(tree, bounds, buffer = 0) {
+ 225 |   if (!tree) return [];
+ 226 | 
+ 227 |   const result = [];
+ 228 | 
+ 229 |   const queryBounds = {
+ 230 |     minX: bounds.xMin - buffer,
+ 231 |     maxX: bounds.xMax + buffer,
+ 232 |     minY: bounds.yMin - buffer,
+ 233 |     maxY: bounds.yMax + buffer,
+ 234 |   };
+ 235 | 
+ 236 |   return tree.query(queryBounds, result);
+ 237 | }
+ 238 | 
 ```
 
 
 ---
 
 ## 📄 src\lib\syntheticDataGenerator.js
-**hash:** `1a03078e`
+**hash:** `6c6e3f3b`
 
 ### Chunk 1/1
 
@@ -6578,30 +8239,32 @@ imagdPlotting
   18 |     const column = index % columns;
   19 |     const row = Math.floor(index / columns);
   20 | 
-  21 |     syntheticPoints.push({
-  22 |       id: `synth-${index}`,
-  23 |       x: column * spacing,
-  24 |       y: row * spacing,
-  25 |       image: BASE_IMAGE_PATH,
-  26 |       label: `Point ${index + 1} (${column * spacing}, ${row * spacing})`,
-  27 |       meta: {
-  28 |         interval: column * spacing,
-  29 |         angle: row * spacing,
-  30 |         quality: parseFloat((0.7 + Math.random() * 0.25).toFixed(2)),
-  31 |       },
-  32 |     });
-  33 |   }
-  34 | 
-  35 |   return syntheticPoints;
-  36 | }
-  37 | 
-  38 | /**
-  39 |  * Computes the number of columns for a near-square grid layout.
-  40 |  */
-  41 | function computeGridColumns(totalPoints) {
-  42 |   return Math.ceil(Math.sqrt(totalPoints));
-  43 | }
-  44 | 
+  21 |     syntheticPoints.push(
+  22 |       Object.freeze({
+  23 |         id: `synth-${index}`,
+  24 |         x: column * spacing,
+  25 |         y: row * spacing,
+  26 |         image: BASE_IMAGE_PATH,
+  27 |         label: `Point ${index + 1}`,
+  28 |         meta: Object.freeze({
+  29 |           interval: column * spacing,
+  30 |           angle: row * spacing,
+  31 |           quality: parseFloat((0.7 + Math.random() * 0.25).toFixed(2)),
+  32 |         }),
+  33 |       }),
+  34 |     );
+  35 |   }
+  36 | 
+  37 |   return syntheticPoints;
+  38 | }
+  39 | 
+  40 | /**
+  41 |  * Computes the number of columns for a near-square grid layout.
+  42 |  */
+  43 | function computeGridColumns(totalPoints) {
+  44 |   return Math.ceil(Math.sqrt(totalPoints));
+  45 | }
+  46 | 
 ```
 
 

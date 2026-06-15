@@ -9,10 +9,6 @@ export const LIBRARIES = [
 
 export const DISABLED_LIBRARIES = ["DeckGL", "ECharts"];
 
-/**
- * Dynamic image count support.
- * We no longer restrict to [1,2,4,8].
- */
 export const MIN_IMAGES_PER_POINT = 1;
 export const MAX_IMAGES_PER_POINT = 8;
 
@@ -57,8 +53,4 @@ export const ZOOM_SCALE_FACTOR = 1.5;
 
 export const WHEEL_ZOOM_SENSITIVITY = 0.002;
 
-/**
- * Prevent browser crashes.
- * 1000 x 1000 = 1,000,000 rendered images.
- */
 export const MAX_RENDER_IMAGES = 50000;

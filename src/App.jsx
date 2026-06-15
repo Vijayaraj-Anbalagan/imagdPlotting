@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import Navbar from "./components/Navbar";
 import ImageCountSelector from "./components/ImageCountSelector";
@@ -9,14 +9,13 @@ import D3Plotter from "./components/D3Plotter";
 import PixiPlotter from "./components/PixiPlotter";
 import KonvaPlotter from "./components/KonvaPlotter";
 
-import { generateSyntheticPoints } from "./lib/syntheticDataGenerator";
-
 import {
   DATA_POINT_LIMITS,
   MAX_IMAGES_PER_POINT,
   MIN_IMAGES_PER_POINT,
 } from "./lib/constants";
 
+import { retainOnlyChartViewports } from "./lib/chartViewportStore";
 import "./App.css";
 
 function App() {
@@ -29,6 +28,12 @@ function App() {
   const [multiChartCount, setMultiChartCount] = useState(5);
 
   const [virtualiseCharts, setVirtualiseCharts] = useState(false);
+
+  const [enableQuadtree, setEnableQuadtree] = useState(false);
+
+  const [enableLOD, setEnableLOD] = useState(false);
+
+  const [enableCanvas, setEnableCanvas] = useState(false);
 
   const [dataPointCount, setDataPointCount] = useState(
     DATA_POINT_LIMITS.defaultCount,
@@ -51,25 +56,7 @@ function App() {
     overscan: 1,
   });
 
-  console.log(
-    "Visible charts:",
-    rowVirtualizer
-      .getVirtualItems()
-      .slice(0, 2)
-      .map((item) => item.index + 1),
-  );
-
-  /**
-   * Stable deterministic synthetic data.
-   */
-  const syntheticPoints = useMemo(() => {
-    return generateSyntheticPoints(
-      Math.max(
-        DATA_POINT_LIMITS.min,
-        Math.min(dataPointCount, DATA_POINT_LIMITS.max),
-      ),
-    );
-  }, [dataPointCount]);
+  const virtualItems = rowVirtualizer.getVirtualItems();
 
   const handleGapUpdate = () => {
     setAppliedXGap(draftXGap);
@@ -109,8 +96,28 @@ function App() {
     imageCount,
     xGap: appliedXGap,
     yGap: appliedYGap,
-    syntheticPoints,
+    dataPointCount,
+    enableQuadtree,
+    enableLOD,
+    enableCanvas,
   };
+
+  const activeChartIds = useMemo(() => {
+    if (!multiChartMode) {
+      return ["single-chart"];
+    }
+
+    return Array.from(
+      {
+        length: multiChartCount,
+      },
+      (_, index) => `chart-${index}`,
+    );
+  }, [multiChartMode, multiChartCount]);
+
+  useEffect(() => {
+    retainOnlyChartViewports(activeChartIds);
+  }, [activeChartIds]);
 
   const renderSinglePlotter = ({ key, chartId }) => {
     switch (activeTab) {
@@ -149,7 +156,10 @@ function App() {
     if (!multiChartMode) {
       return (
         <div className="single-chart-wrapper">
-          {renderSinglePlotter("single-chart", "single-chart")}
+          {renderSinglePlotter({
+            key: "single-chart",
+            chartId: "single-chart",
+          })}
         </div>
       );
     }
@@ -192,12 +202,12 @@ function App() {
             position: "relative",
           }}
         >
-          {rowVirtualizer
-            .getVirtualItems()
-            .slice(0, 2)
-            .map((virtualRow) => (
+          {virtualItems.slice(0, 2).map((virtualRow) => {
+            const chartId = `chart-${virtualRow.index}`;
+
+            return (
               <div
-                key={virtualRow.key}
+                key={chartId}
                 style={{
                   position: "absolute",
                   top: 0,
@@ -213,12 +223,13 @@ function App() {
                   </div>
 
                   {renderSinglePlotter({
-                    key: `chart-${virtualRow.index}`,
-                    chartId: `chart-${virtualRow.index}`,
+                    key: chartId,
+                    chartId,
                   })}
                 </div>
               </div>
-            ))}
+            );
+          })}
         </div>
       </div>
     );
@@ -245,21 +256,47 @@ function App() {
       <div className="multi-chart-controls">
         {" "}
         <div className="multi-chart-toggle-row">
-          <label className="multi-chart-label"> Multi Chart Mode </label>{" "}
+          <label className="multi-chart-label"> Multi Chart Mode </label>
           <button
             className={`multi-chart-toggle ${multiChartMode ? "active" : ""}`}
             onClick={() => setMultiChartMode((prev) => !prev)}
           >
-            {" "}
-            {multiChartMode ? "Enabled" : "Disabled"}{" "}
-          </button>{" "}
+            {multiChartMode ? "Enabled" : "Disabled"}
+          </button>
+
           <label className="multi-chart-label">Virtualise Charts</label>
           <button
             className={`multi-chart-toggle ${virtualiseCharts ? "active" : ""}`}
             onClick={() => setVirtualiseCharts((prev) => !prev)}
           >
             {virtualiseCharts ? "Enabled" : "Disabled"}
-          </button>{" "}
+          </button>
+
+          {/* ✅ NEW BUTTONS */}
+
+          <label className="multi-chart-label">Quadtree</label>
+          <button
+            className={`multi-chart-toggle ${enableQuadtree ? "active" : ""}`}
+            onClick={() => setEnableQuadtree((prev) => !prev)}
+          >
+            {enableQuadtree ? "Enabled" : "Disabled"}
+          </button>
+
+          <label className="multi-chart-label">LOD Images</label>
+          <button
+            className={`multi-chart-toggle ${enableLOD ? "active" : ""}`}
+            onClick={() => setEnableLOD((prev) => !prev)}
+          >
+            {enableLOD ? "Enabled" : "Disabled"}
+          </button>
+
+          <label className="multi-chart-label">Canvas Rendering</label>
+          <button
+            className={`multi-chart-toggle ${enableCanvas ? "active" : ""}`}
+            onClick={() => setEnableCanvas((prev) => !prev)}
+          >
+            {enableCanvas ? "Enabled" : "Disabled"}
+          </button>
         </div>{" "}
         {multiChartMode && (
           <div className="multi-chart-count-row">

@@ -11,7 +11,12 @@ import {
 } from "react-konva";
 import { usePlotterData } from "../lib/plotterData";
 import { computeImagePositions } from "../lib/gridLayout";
-import { CELL_SIZE, PLOT_DIMENSIONS, PLOT_MARGIN } from "../lib/constants";
+import {
+  CELL_SIZE,
+  PLOT_DIMENSIONS,
+  PLOT_MARGIN,
+  DATA_POINT_LIMITS,
+} from "../lib/constants";
 import {
   computeAdaptiveCellSize,
   filterVisiblePoints,
@@ -20,18 +25,19 @@ import {
 import PlotterControls from "./PlotterControls";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
-import { getCachedImageObject, preloadImageSources } from "../lib/imageCache";
 import {
   getChartViewport,
   updateChartViewport,
 } from "../lib/chartViewportStore";
+import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
 
 const AXIS_TICK_COUNT = 8;
 const EXTENT_PADDING_RATIO = 0.2;
 const EXTENT_FALLBACK_PADDING = 5;
 const ZOOM_STEP = 1.5;
 const PINCH_ZOOM_SENSITIVITY = 0.01;
-const ZOOM_MIN = 0.3;
+const ZOOM_MIN = 1;
+const MIN_ZOOM_SCALE = 1.001;
 const ZOOM_MAX = 100000;
 const GRID_COLOR = "#2a2a3e";
 const AXIS_LINE_COLOR = "#555555";
@@ -42,36 +48,28 @@ const BRUSH_STROKE = "#4493ff";
 const BRUSH_STROKE_WIDTH = 1.5;
 const BRUSH_MIN_PIXELS = 5;
 
-function KonvaPlotter({ chartId, imageCount, syntheticPoints }) {
+function KonvaPlotter({ chartId, imageCount, dataPointCount }) {
   const {
     plotterPoints: fetchedPoints,
     isLoading,
     loadError,
   } = usePlotterData();
-  const [imagesLoaded, setImagesLoaded] = useState(false);
+
+  const syntheticPoints = useMemo(() => {
+    return generateSyntheticPoints(
+      Math.max(
+        DATA_POINT_LIMITS.min,
+        Math.min(dataPointCount, DATA_POINT_LIMITS.max),
+      ),
+    );
+  }, [dataPointCount]);
 
   const plotterPoints = syntheticPoints || fetchedPoints;
-
-  useEffect(() => {
-    if (!plotterPoints || plotterPoints.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setImagesLoaded(true);
-      return;
-    }
-    const uniqueSources = [
-      ...new Set(plotterPoints.map((point) => point.image)),
-    ];
-    preloadImageSources(uniqueSources).then(() => {
-      setImagesLoaded(true);
-    });
-  }, [plotterPoints]);
 
   if (!syntheticPoints && isLoading)
     return <div className="plotter-loading">Loading data…</div>;
   if (!syntheticPoints && loadError)
     return <div className="plotter-error">Error: {loadError}</div>;
-  if (!imagesLoaded)
-    return <div className="plotter-loading">Preloading images…</div>;
 
   return (
     <KonvaCanvas
@@ -85,18 +83,24 @@ function KonvaPlotter({ chartId, imageCount, syntheticPoints }) {
 function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
   /* Hot-path viewport state stored in refs — mutations never trigger React
      reconciliation. A RAF-throttled forceUpdate flushes the view at ≤60 fps. */
-  const savedViewportRef = useRef(getChartViewport(chartId));
+  const savedViewportRef = useRef(getChartViewport(chartId) ?? {});
 
-  const scaleRef = useRef(savedViewportRef.current.scale ?? 1);
+  const initialScale = Math.max(savedViewportRef.current.scale ?? 1, ZOOM_MIN);
 
-  const offsetRef = useRef({
-    x: savedViewportRef.current.translateX ?? 0,
-    y: savedViewportRef.current.translateY ?? 0,
-  });
+  const scaleRef = useRef(initialScale);
+
+  const offsetRef = useRef(
+    initialScale <= MIN_ZOOM_SCALE
+      ? { x: 0, y: 0 }
+      : {
+          x: savedViewportRef.current.translateX ?? 0,
+          y: savedViewportRef.current.translateY ?? 0,
+        },
+  );
+
   const rafPendingRef = useRef(false);
   const [, forceUpdate] = useState(0);
-
-  /* React state only for things that need declarative rendering. */
+  const rafIdRef = useRef(null);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -113,6 +117,7 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
 
   const persistViewport = useCallback(() => {
     if (!chartId) return;
+    if (scaleRef.current == null || !offsetRef.current) return;
 
     updateChartViewport(chartId, {
       scale: scaleRef.current,
@@ -124,9 +129,12 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
   /* Schedule a single React flush per animation frame. */
   const scheduleUpdate = useCallback(() => {
     if (rafPendingRef.current) return;
+
     rafPendingRef.current = true;
-    requestAnimationFrame(() => {
+
+    rafIdRef.current = requestAnimationFrame(() => {
       rafPendingRef.current = false;
+      rafIdRef.current = null;
       forceUpdate((n) => n + 1);
     });
   }, []);
@@ -139,8 +147,8 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
   const innerHeight =
     PLOT_DIMENSIONS.height - PLOT_MARGIN.top - PLOT_MARGIN.bottom;
 
-  const contentScale = scaleRef.current;
-  const contentOffset = offsetRef.current;
+  const contentScale = scaleRef.current ?? 1;
+  const contentOffset = offsetRef.current ?? { x: 0, y: 0 };
 
   const { xScale, yScale, xExtent, yExtent } = buildScales(
     plotterPoints,
@@ -183,13 +191,43 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
 
   useEffect(() => {
     return () => {
-      if (!chartId) return;
+      /**
+       * Keep only lightweight interaction state.
+       * This allows restoring zoom/pan when chart remounts.
+       */
+      if (chartId && scaleRef.current != null && offsetRef.current) {
+        updateChartViewport(chartId, {
+          scale: scaleRef.current,
+          translateX: offsetRef.current.x,
+          translateY: offsetRef.current.y,
+        });
+      }
 
-      updateChartViewport(chartId, {
-        scale: scaleRef.current,
-        translateX: offsetRef.current.x,
-        translateY: offsetRef.current.y,
-      });
+      /**
+       * Release temporary runtime state.
+       */
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+
+      rafPendingRef.current = false;
+
+      brushStartRef.current = null;
+
+      dragRef.current = {
+        dragging: false,
+        startX: 0,
+        startY: 0,
+        startOffset: { x: 0, y: 0 },
+      };
+
+      stageRef.current = null;
+
+      /**
+       * Do NOT remove chartViewportStore entry here.
+       * App.jsx will prune it only when the chart becomes disabled / removed.
+       */
     };
   }, [chartId]);
 
@@ -250,7 +288,17 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
       );
       const currentScale = scaleRef.current;
       const currentOffset = offsetRef.current;
+      const isZoomOut = scaleDelta < 1;
+
+      if (isZoomOut && currentScale <= MIN_ZOOM_SCALE) {
+        return;
+      }
+
       const newScale = clampScale(currentScale * scaleDelta);
+
+      if (newScale === currentScale) {
+        return;
+      }
 
       logChartInteractionEvent({
         interactionType: scaleDelta > 1 ? "ZOOM_IN" : "ZOOM_OUT",
@@ -289,6 +337,7 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
       if (!isPointerInsidePlotArea(pointer, innerWidth, innerHeight)) return;
 
       if (isPanMode) {
+        if (scaleRef.current <= MIN_ZOOM_SCALE) return;
         logChartInteractionEvent({
           interactionType: "PAN",
           visualizationLibrary: "Konva",
@@ -318,6 +367,7 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
       if (!pointer) return;
 
       if (dragRef.current.dragging) {
+        if (scaleRef.current <= MIN_ZOOM_SCALE) return;
         const dx = pointer.x - dragRef.current.startX;
         const dy = pointer.y - dragRef.current.startY;
         const clamped = clampContentOffset(
@@ -416,13 +466,20 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
   }, [innerWidth, innerHeight, persistViewport, scheduleUpdate]);
 
   const handleZoomOut = useCallback(() => {
+    const currentScale = scaleRef.current;
+
+    if (currentScale <= MIN_ZOOM_SCALE) {
+      return;
+    }
+
     logChartInteractionEvent({
       interactionType: "ZOOM_OUT",
       visualizationLibrary: "Konva",
       interactionSource: "button",
     });
-    const currentScale = scaleRef.current;
+
     const currentOffset = offsetRef.current;
+
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const newScale = clampScale(currentScale / ZOOM_STEP);
@@ -462,8 +519,9 @@ function KonvaCanvas({ chartId, plotterPoints, imageCount }) {
     });
     scaleRef.current = 1;
     offsetRef.current = { x: 0, y: 0 };
+    persistViewport();
     scheduleUpdate();
-  }, [scheduleUpdate]);
+  }, [persistViewport, scheduleUpdate]);
 
   const stageCursor = isPanMode
     ? isDragging
@@ -769,6 +827,37 @@ function ImagePointGroup({
   onHover,
   onCursorMove,
 }) {
+  const [imgObj, setImgObj] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const img = new Image();
+
+    img.onload = () => {
+      if (isMounted) {
+        setImgObj(img);
+      }
+    };
+
+    img.onerror = () => {
+      if (isMounted) {
+        setImgObj(null);
+      }
+    };
+
+    img.src = point.image;
+
+    return () => {
+      isMounted = false;
+
+      img.onload = null;
+      img.onerror = null;
+      img.src = "";
+
+      setImgObj(null);
+    };
+  }, [point.image]);
+
   const centerX = xScale(point.x);
   const centerY = yScale(point.y);
   const resolvedCellSize = cellSize ?? CELL_SIZE;
@@ -780,65 +869,31 @@ function ImagePointGroup({
     imageCount,
   );
 
+  if (!imgObj) return null;
+
   return (
     <>
       {positions.map((position, index) => (
-        <KonvaCachedImage
+        <KonvaImage
           key={`${point.id}-${index}`}
-          imageUrl={point.image}
+          image={imgObj}
           x={position.x}
           y={position.y}
           width={position.width}
           height={position.height}
           point={point}
-          onHover={onHover}
-          onCursorMove={onCursorMove}
+          onMouseEnter={(event) => {
+            const stage = event.target.getStage();
+            const pointerPosition = stage.getPointerPosition();
+            onHover(point);
+            onCursorMove({ x: pointerPosition.x, y: pointerPosition.y });
+          }}
+          onMouseLeave={() => onHover(null)}
         />
       ))}
     </>
   );
 }
-
-function KonvaCachedImage({
-  imageUrl,
-  x,
-  y,
-  width,
-  height,
-  point,
-  onHover,
-  onCursorMove,
-}) {
-  const loadedImage = getCachedImageObject(imageUrl);
-
-  const handleMouseEnter = useCallback(
-    (event) => {
-      const stage = event.target.getStage();
-      const pointer = stage.getPointerPosition();
-      onCursorMove({ x: pointer.x, y: pointer.y });
-      onHover(point);
-    },
-    [point, onHover, onCursorMove],
-  );
-
-  const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
-
-  if (!loadedImage) return null;
-
-  return (
-    <KonvaImage
-      image={loadedImage}
-      x={x}
-      y={y}
-      width={width}
-      height={height}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    />
-  );
-}
-
-/* ─── Brush → Zoom conversion ─────────────────────────────────────────── */
 
 function convertBrushToZoom(
   brushPixelRect,
