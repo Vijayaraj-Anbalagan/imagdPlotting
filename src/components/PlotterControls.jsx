@@ -29,6 +29,8 @@ export default function PlotterControls({
   zoomLevel,
   interactionMode,
   onModeChange,
+  forceNumericTicks,
+  onForceNumericToggle,
 }) {
   const isZoomActive = interactionMode === INTERACTION_MODES.ZOOM;
   const isPanActive = interactionMode === INTERACTION_MODES.PAN;
@@ -66,6 +68,18 @@ export default function PlotterControls({
       <button className="zoom-button" onClick={onReset}>
         Reset
       </button>
+      {onForceNumericToggle && (
+        <>
+          <span className="mode-separator" />
+          <button
+            className={`mode-button ${forceNumericTicks ? "active" : ""}`}
+            onClick={onForceNumericToggle}
+            title={forceNumericTicks ? "Showing D3 rounded ticks — click for exact data values" : "Showing exact decimal values — click for D3 rounded ticks"}
+          >
+            <span>Str→Num</span>
+          </button>
+        </>
+      )}
       {zoomLevel !== undefined && (
         <span style={{ color: "#888", fontSize: "0.75rem", marginLeft: 8 }}>
           {Math.round(zoomLevel * 100)}%

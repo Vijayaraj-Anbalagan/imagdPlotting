@@ -1,0 +1,170 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-box {
+  position: relative;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 10px;
+  max-width: 90vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 10;
+  background: rgba(40, 40, 40, 0.9);
+  border: 1px solid #444;
+  border-radius: 50%;
+  color: #ccc;
+  width: 30px;
+  height: 30px;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+
+.modal-close:hover {
+  background: #555;
+  color: #fff;
+}
+
+.modal-viewer {
+  width: 720px;
+  max-width: 88vw;
+  height: 520px;
+  max-height: 62vh;
+  background: #000;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* OSD appends the element to body and adds class "fullpage" — remove all size
+   constraints so the viewer can actually fill the full viewport. */
+.modal-viewer.fullpage {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 99999 !important;
+}
+
+.modal-carousel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: #111;
+  border-top: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.carousel-arrow {
+  background: rgba(50, 50, 50, 0.9);
+  border: 1px solid #444;
+  border-radius: 50%;
+  color: #ccc;
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.carousel-arrow:hover:not(:disabled) {
+  background: #555;
+  color: #fff;
+}
+
+.carousel-arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.carousel-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.carousel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #444;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: none;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.carousel-dot.active {
+  background: #aaa;
+}
+
+.carousel-label {
+  color: #666;
+  font-size: 12px;
+  min-width: 50px;
+  text-align: center;
+}
+
+.modal-info {
+  padding: 12px 16px;
+  background: #111;
+  border-top: 1px solid #2a2a2a;
+  color: #999;
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.modal-info-label {
+  width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
+  margin-bottom: 4px;
+}
+
+.modal-info-field {
+  display: flex;
+  gap: 4px;
+}
+
+.modal-info-key {
+  color: #666;
+}
+
+.modal-info-value {
+  color: #bbb;
+}

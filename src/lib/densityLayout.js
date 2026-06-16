@@ -1,16 +1,5 @@
 import { ADAPTIVE_CELL_SIZE } from "./constants";
 
-/**
- * Computes an image cell size that prevents overlap by adapting to
- * the density of points in the current viewport's pixel-space.
- *
- * Uses a grid-bucket spatial index for O(n) nearest-neighbor estimation.
- *
- * @param {Array}    plotterPoints - Array of { x, y, ... } data objects
- * @param {Function} xScaleFn     - Converts data-x → pixel-x
- * @param {Function} yScaleFn     - Converts data-y → pixel-y
- * @returns {number} Optimal cell size in pixels
- */
 export function computeAdaptiveCellSize(plotterPoints, xScaleFn, yScaleFn) {
   if (plotterPoints.length <= 1) {
     return ADAPTIVE_CELL_SIZE.max;
@@ -30,23 +19,9 @@ export function computeAdaptiveCellSize(plotterPoints, xScaleFn, yScaleFn) {
   const desiredSize = medianDistance * ADAPTIVE_CELL_SIZE.gapRatio;
   const clampedSize = clampCellSize(desiredSize);
 
-  /* Hard ceiling: cell size must NEVER exceed the actual neighbor distance.
-     This guarantees zero overlap even if the min floor is too high. */
   return Math.min(clampedSize, medianDistance * ADAPTIVE_CELL_SIZE.gapRatio);
 }
 
-/**
- * Filters points to only those visible within the viewport bounds,
- * plus a margin equal to one cell size on each side.
- *
- * @param {Array}    plotterPoints   - Full array of data points
- * @param {Function} xScaleFn       - Converts data-x → pixel-x
- * @param {Function} yScaleFn       - Converts data-y → pixel-y
- * @param {number}   viewportWidth  - Viewport width in pixels
- * @param {number}   viewportHeight - Viewport height in pixels
- * @param {number}   cellMargin     - Extra margin (half cell size) for edge points
- * @returns {Array} Subset of plotterPoints within the visible area
- */
 export function filterVisiblePoints(
   plotterPoints,
   xScaleFn,
@@ -73,10 +48,6 @@ export function filterVisiblePoints(
   });
 }
 
-/**
- * Always preserve requested image count.
- * We scale image sizes instead of collapsing image count.
- */
 export function computeEffectiveImageCount(adaptiveCellSize, imageCount) {
   const parsed = Number(imageCount);
 
@@ -87,16 +58,12 @@ export function computeEffectiveImageCount(adaptiveCellSize, imageCount) {
   return Math.max(1, Math.min(8, Math.floor(parsed)));
 }
 
-/* ─── Internal: Pixel Projection ────────────────────────────────── */
-
 function projectPointsToPixels(plotterPoints, xScaleFn, yScaleFn) {
   return plotterPoints.map((point) => ({
     x: xScaleFn(point.scaledX ?? point.x),
     y: yScaleFn(point.scaledY ?? point.y),
   }));
 }
-
-/* ─── Internal: Median Nearest-Neighbor Distance ────────────────── */
 
 function estimateMedianNeighborDistance(pixelPositions) {
   if (pixelPositions.length <= 1) {
@@ -115,12 +82,6 @@ function estimateMedianNeighborDistance(pixelPositions) {
   return neighborDistances[medianIndex];
 }
 
-/* ─── Internal: Grid-Bucket Spatial Index ───────────────────────── */
-
-/**
- * Computes nearest-neighbor distance for each point using a spatial
- * grid bucket approach. Average complexity is O(n).
- */
 function collectNearestNeighborDistances(pixelPositions) {
   const bounds = computePixelBounds(pixelPositions);
   const bucketSize = estimateBucketSize(bounds, pixelPositions.length);
@@ -230,8 +191,6 @@ function findNearestNeighborDistance(
 
   return Math.sqrt(nearestDistanceSquared);
 }
-
-/* ─── Internal: Clamping ────────────────────────────────────────── */
 
 function clampCellSize(rawSize) {
   return Math.max(

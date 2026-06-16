@@ -10,24 +10,29 @@ const BASE_IMAGE_PATH = "/images/base.jpg";
 export function generateSyntheticPoints(totalPoints) {
   const clampedCount = Math.max(1, Math.min(totalPoints, 2000));
   const columns = computeGridColumns(clampedCount);
-  const spacing = 15;
+  const xStep = 1.5;
+  const yStep = 1.3;
+  const xOrigin = 10.3;
+  const yOrigin = 15.8;
 
   const syntheticPoints = [];
 
   for (let index = 0; index < clampedCount; index++) {
     const column = index % columns;
     const row = Math.floor(index / columns);
+    const x = parseFloat((xOrigin + column * xStep).toFixed(2));
+    const y = parseFloat((yOrigin + row * yStep).toFixed(2));
 
     syntheticPoints.push(
       Object.freeze({
         id: `synth-${index}`,
-        x: column * spacing,
-        y: row * spacing,
+        x,
+        y,
         image: BASE_IMAGE_PATH,
         label: `Point ${index + 1}`,
         meta: Object.freeze({
-          interval: column * spacing,
-          angle: row * spacing,
+          interval: x,
+          angle: y,
           quality: parseFloat((0.7 + Math.random() * 0.25).toFixed(2)),
         }),
       }),

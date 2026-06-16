@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable react-hooks/refs */
 import {
   useState,
   useMemo,
@@ -20,6 +22,7 @@ import {
   computeEffectiveImageCount,
 } from "../lib/densityLayout";
 import PlotterControls from "./PlotterControls";
+import ImageModal from "./ImageModal";
 import ImageCanvasLayer from "./ImageCanvasLayer";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
 import { useInteractionMode } from "../lib/interactionMode";
@@ -34,7 +37,7 @@ import { computeImagePositions } from "../lib/gridLayout";
 
 const ZOOM_STEP = 1.5;
 const ZOOM_EPS = 0.001;
-const ZOOM_MAX = 250;
+const ZOOM_MAX = 1000;
 const BRUSH_MIN_PIXELS = 5;
 const BRUSH_FILL = "rgba(68, 147, 255, 0.15)";
 const BRUSH_STROKE = "#4493ff";
@@ -184,6 +187,8 @@ const ControlsLayer = memo(function ControlsLayer({
   onReset,
   interactionMode,
   onModeChange,
+  forceNumericTicks,
+  onForceNumericToggle,
 }) {
   return (
     <div style={{ position: "relative", zIndex: 10, marginBottom: 12 }}>
@@ -194,6 +199,8 @@ const ControlsLayer = memo(function ControlsLayer({
         onReset={onReset}
         interactionMode={interactionMode}
         onModeChange={onModeChange}
+        forceNumericTicks={forceNumericTicks}
+        onForceNumericToggle={onForceNumericToggle}
       />
     </div>
   );
@@ -229,6 +236,10 @@ function RechartsCanvas({
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const brushStartRef = useRef(null);
   const pendingTransformRef = useRef(null);
+  const [clickedPoint, setClickedPoint] = useState(null);
+  const [clickedTileIndex, setClickedTileIndex] = useState(0);
+  const pointerDownInfoRef = useRef(null);
+  const [forceNumericTicks, setForceNumericTicks] = useState(false);
   const { interactionMode, setInteractionMode, isPanMode } =
     useInteractionMode();
 
@@ -420,12 +431,32 @@ function RechartsCanvas({
   );
 
   const xTicks = useMemo(() => {
-    return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, 8);
-  }, [visibleDomain.xMin, visibleDomain.xMax]);
+    const maxCount = Math.max(4, Math.floor(innerWidth / 60));
+    if (forceNumericTicks) {
+      return d3.ticks(visibleDomain.xMin, visibleDomain.xMax, maxCount);
+    }
+    return computeDataTicks(
+      normalizedPoints,
+      (p) => p.scaledX,
+      visibleDomain.xMin,
+      visibleDomain.xMax,
+      maxCount,
+    );
+  }, [normalizedPoints, visibleDomain.xMin, visibleDomain.xMax, forceNumericTicks, innerWidth]);
 
   const yTicks = useMemo(() => {
-    return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, 6);
-  }, [visibleDomain.yMin, visibleDomain.yMax]);
+    const maxCount = Math.max(3, Math.floor(innerHeight / 45));
+    if (forceNumericTicks) {
+      return d3.ticks(visibleDomain.yMin, visibleDomain.yMax, maxCount);
+    }
+    return computeDataTicks(
+      normalizedPoints,
+      (p) => p.scaledY,
+      visibleDomain.yMin,
+      visibleDomain.yMax,
+      maxCount,
+    );
+  }, [normalizedPoints, visibleDomain.yMin, visibleDomain.yMax, forceNumericTicks, innerHeight]);
 
   const xTickScale = useMemo(() => {
     const scale = d3.scaleLinear();
@@ -449,8 +480,9 @@ function RechartsCanvas({
       yTickScale,
       innerWidth,
       innerHeight,
+      forceNumericTicks,
     }),
-    [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight],
+    [xTicks, yTicks, xTickScale, yTickScale, innerWidth, innerHeight, forceNumericTicks],
   );
 
   const clipId = useMemo(
@@ -665,6 +697,12 @@ function RechartsCanvas({
 
   const handlePointerDown = useCallback(
     (event) => {
+      pointerDownInfoRef.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        time: Date.now(),
+      };
+
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect) return;
 
@@ -838,6 +876,73 @@ function RechartsCanvas({
 
   const handlePointerUp = useCallback(
     (event) => {
+      const downInfo = pointerDownInfoRef.current;
+      pointerDownInfoRef.current = null;
+      if (downInfo) {
+        const dx = event.clientX - downInfo.clientX;
+        const dy = event.clientY - downInfo.clientY;
+        const isClick =
+          dx * dx + dy * dy < 25 && Date.now() - downInfo.time < 300;
+        if (isClick) {
+          const rect = svgRef.current?.getBoundingClientRect();
+          if (rect) {
+            const localX = event.clientX - rect.left - PLOT_MARGIN.left;
+            const localY = event.clientY - rect.top - PLOT_MARGIN.top;
+            if (
+              localX >= 0 &&
+              localY >= 0 &&
+              localX <= innerWidth &&
+              localY <= innerHeight
+            ) {
+              const contentX = (localX - transform.x) / transform.scale;
+              const contentY = (localY - transform.y) / transform.scale;
+              const hitRadius = Math.max(adaptiveCellSizeForRender * 0.6, 4);
+              const hitRadiusSq = hitRadius * hitRadius;
+              let nearest = null;
+              let nearestDistSq = Infinity;
+              for (const p of visiblePointsForRender) {
+                const px = baseXScale(p.scaledX);
+                const py = baseYScale(p.scaledY);
+                const ddx = contentX - px;
+                const ddy = contentY - py;
+                const d2 = ddx * ddx + ddy * ddy;
+                if (d2 <= hitRadiusSq && d2 < nearestDistSq) {
+                  nearest = p;
+                  nearestDistSq = d2;
+                }
+              }
+              if (nearest) {
+                const positions = computeImagePositions(
+                  baseXScale(nearest.scaledX),
+                  baseYScale(nearest.scaledY),
+                  adaptiveCellSizeForRender,
+                  adaptiveCellSizeForRender,
+                  effectiveImageCountForRender,
+                );
+                let tileIndex = 0;
+                for (const pos of positions) {
+                  const tileCX = pos.x + pos.width / 2;
+                  const tileCY = pos.y + pos.height / 2;
+                  if (
+                    Math.abs(contentX - tileCX) <= pos.width / 2 &&
+                    Math.abs(contentY - tileCY) <= pos.height / 2
+                  ) {
+                    tileIndex = pos.imageIndex;
+                    break;
+                  }
+                }
+                brushStartRef.current = null;
+                setBrushRect(null);
+                event.currentTarget.releasePointerCapture?.(event.pointerId);
+                setClickedPoint(nearest);
+                setClickedTileIndex(tileIndex);
+                return;
+              }
+            }
+          }
+        }
+      }
+
       if (brushStartRef.current && brushRect) {
         const isTooSmall =
           brushRect.width < BRUSH_MIN_PIXELS ||
@@ -887,6 +992,11 @@ function RechartsCanvas({
       contentHeight,
       fitScale,
       homeTransform,
+      adaptiveCellSizeForRender,
+      effectiveImageCountForRender,
+      baseXScale,
+      baseYScale,
+      visiblePointsForRender,
     ],
   );
 
@@ -952,6 +1062,8 @@ function RechartsCanvas({
         onReset={handleReset}
         interactionMode={interactionMode}
         onModeChange={setInteractionMode}
+        forceNumericTicks={forceNumericTicks}
+        onForceNumericToggle={() => setForceNumericTicks((v) => !v)}
       />
 
       <div style={{ position: "relative", width: "100%" }}>
@@ -1101,6 +1213,18 @@ function RechartsCanvas({
         tooltipRef={tooltipRef}
         position={tooltipPosition}
       />
+
+      {clickedPoint && (
+        <ImageModal
+          point={clickedPoint}
+          imageCount={effectiveImageCountForRender}
+          initialImageIndex={clickedTileIndex}
+          onClose={() => {
+            setClickedPoint(null);
+            setClickedTileIndex(0);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1154,6 +1278,7 @@ const AxisLabels = memo(function AxisLabels({
   xTickScale,
   yTickScale,
   innerHeight,
+  forceNumericTicks,
 }) {
   return (
     <>
@@ -1168,7 +1293,7 @@ const AxisLabels = memo(function AxisLabels({
             fontSize="11"
             textAnchor="middle"
           >
-            {formatTick(tick)}
+            {formatTick(tick, forceNumericTicks)}
           </text>
         );
       })}
@@ -1184,7 +1309,7 @@ const AxisLabels = memo(function AxisLabels({
             fontSize="11"
             textAnchor="end"
           >
-            {formatTick(tick)}
+            {formatTick(tick, forceNumericTicks)}
           </text>
         );
       })}
@@ -1302,9 +1427,31 @@ function convertBrushToTransform(
   );
 }
 
-function formatTick(value) {
-  if (Number.isInteger(value)) return String(value);
-  return parseFloat(Number(value).toPrecision(4)).toString();
+function computeDataTicks(points, accessor, domainMin, domainMax, maxCount, threshold = 20) {
+  const inRange = new Set();
+  for (const p of points) {
+    const v = accessor(p);
+    if (v >= domainMin && v <= domainMax) inRange.add(v);
+  }
+  const sorted = Array.from(inRange).sort((a, b) => a - b);
+  if (sorted.length === 0 || sorted.length > threshold) {
+    return d3.ticks(domainMin, domainMax, maxCount);
+  }
+  if (sorted.length <= maxCount) return sorted;
+  // Evenly sample keeping first and last
+  const step = (sorted.length - 1) / (maxCount - 1);
+  return Array.from({ length: maxCount }, (_, i) => sorted[Math.round(i * step)]);
+}
+
+function formatTick(value, forceNumeric = false) {
+  const num = forceNumeric ? Number(value) : value;
+  if (!Number.isFinite(num)) return String(value);
+  const str = String(num);
+  const dotIndex = str.indexOf(".");
+  if (dotIndex === -1) return str;
+  if (str.length - dotIndex - 1 > 6)
+    return num.toFixed(6).replace(/\.?0+$/, "");
+  return str;
 }
 
 export default RechartsPlotter;

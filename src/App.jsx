@@ -49,7 +49,6 @@ function App() {
 
   const hasChanges = draftXGap !== appliedXGap || draftYGap !== appliedYGap;
 
-  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useWindowVirtualizer({
     count: multiChartCount,
     estimateSize: () => 720,
@@ -73,9 +72,6 @@ function App() {
     setMultiChartCount(clamped);
   };
 
-  /**
-   * Critical normalization.
-   */
   const handleImageCountChange = (value) => {
     const parsed = Number(value);
 
@@ -164,9 +160,6 @@ function App() {
       );
     }
 
-    /**
-     * NON VIRTUALIZED
-     */
     if (!virtualiseCharts) {
       return (
         <div className="multi-chart-wrapper">
@@ -185,9 +178,6 @@ function App() {
       );
     }
 
-    /**
-     * VIRTUALIZED
-     */
     return (
       <div
         style={{
@@ -271,8 +261,6 @@ function App() {
           >
             {virtualiseCharts ? "Enabled" : "Disabled"}
           </button>
-
-          {/* ✅ NEW BUTTONS */}
 
           <label className="multi-chart-label">Quadtree</label>
           <button
@@ -382,14 +370,10 @@ function App() {
           style={{
             padding: "5px 15px",
             backgroundColor: hasChanges ? "#2e8b57" : "#444",
-
             color: hasChanges ? "#fff" : "#888",
-
             border: "none",
             borderRadius: "4px",
-
             cursor: hasChanges ? "pointer" : "not-allowed",
-
             fontWeight: "bold",
           }}
         >
