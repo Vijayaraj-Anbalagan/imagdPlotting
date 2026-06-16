@@ -30,6 +30,7 @@ import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
 import {
   getChartViewport,
   updateChartViewport,
+  markViewportUserModified,
 } from "../lib/chartViewportStore";
 import { buildQuadtree, queryVisiblePointsQuadtree } from "../lib/quadtree";
 import { useThrottledCallback } from "../lib/debouncedHooks";
@@ -223,6 +224,7 @@ function RechartsCanvas({
   const cachedScalesRef = useRef({ key: null, xScale: null, yScale: null });
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
   const initialViewportRef = useRef(getChartViewport(chartId));
+  const prevGapRef = useRef({ xGap, yGap });
 
   const [transform, setTransform] = useState(() => ({
     scale: initialViewportRef.current.scale || 1,
@@ -317,11 +319,24 @@ function RechartsCanvas({
     [fitScale, contentWidth, contentHeight, innerWidth, innerHeight],
   );
 
-  // Whenever the gap or viewport changes, reset to the fitted home view so
-  // all points are visible at 100 % — same behaviour as pressing Reset.
+  // Reset to home when gap settings change, or on first mount with no saved
+  // user viewport. Container resize (homeTransform change without gap change)
+  // does NOT reset so that the user's zoom/pan survives virtualization remounts.
   useEffect(() => {
+    const gapChanged =
+      prevGapRef.current.xGap !== xGap || prevGapRef.current.yGap !== yGap;
+    prevGapRef.current = { xGap, yGap };
+
+    const saved = getChartViewport(chartId);
+    if (saved?.userModified && !gapChanged) {
+      return;
+    }
+
+    if (gapChanged) {
+      updateChartViewport(chartId, { userModified: false });
+    }
     setTransform(homeTransform);
-  }, [homeTransform]);
+  }, [chartId, xGap, yGap, homeTransform]);
 
   const normalizedPoints = useMemo(() => {
     return plotterPoints.map((point) => ({
@@ -606,8 +621,9 @@ function RechartsCanvas({
       visualizationLibrary: "Recharts",
       interactionSource: "button",
     });
+    markViewportUserModified(chartId);
     zoomTo(transform.scale * ZOOM_STEP, innerWidth / 2, innerHeight / 2);
-  }, [transform.scale, zoomTo, innerWidth, innerHeight]);
+  }, [chartId, transform.scale, zoomTo, innerWidth, innerHeight]);
 
   const handleZoomOut = useCallback(() => {
     if (transform.scale <= fitScale + ZOOM_EPS) {
@@ -620,8 +636,9 @@ function RechartsCanvas({
       interactionSource: "button",
     });
 
+    markViewportUserModified(chartId);
     zoomTo(transform.scale / ZOOM_STEP, innerWidth / 2, innerHeight / 2);
-  }, [transform.scale, zoomTo, innerWidth, innerHeight, fitScale]);
+  }, [chartId, transform.scale, zoomTo, innerWidth, innerHeight, fitScale]);
 
   const handleReset = useCallback(() => {
     logChartInteractionEvent({
@@ -629,9 +646,10 @@ function RechartsCanvas({
       visualizationLibrary: "Recharts",
       interactionSource: "button",
     });
+    updateChartViewport(chartId, { userModified: false });
     setTransform(homeTransform);
     setHoveredPoint(null);
-  }, [homeTransform]);
+  }, [chartId, homeTransform]);
 
   const handleWheel = useCallback(
     (event) => {
@@ -669,6 +687,7 @@ function RechartsCanvas({
 
       const factor = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
 
+      markViewportUserModified(chartId);
       setTransform((prev) => {
         const clampedScale = clamp(prev.scale * factor, fitScale, ZOOM_MAX);
 
@@ -686,6 +705,7 @@ function RechartsCanvas({
       });
     },
     [
+      chartId,
       innerWidth,
       innerHeight,
       contentWidth,
@@ -727,6 +747,7 @@ function RechartsCanvas({
           visualizationLibrary: "Recharts",
           interactionSource: "drag",
         });
+        markViewportUserModified(chartId);
         setIsDragging(true);
         dragRef.current = {
           dragging: true,
@@ -745,7 +766,7 @@ function RechartsCanvas({
       setBrushRect({ x: clampedX, y: clampedY, width: 0, height: 0 });
       event.currentTarget.setPointerCapture?.(event.pointerId);
     },
-    [innerWidth, innerHeight, fitScale, transform, isPanMode],
+    [chartId, innerWidth, innerHeight, fitScale, transform, isPanMode],
   );
 
   const handlePointerMove = useCallback(
@@ -954,6 +975,7 @@ function RechartsCanvas({
             visualizationLibrary: "Recharts",
             interactionSource: "brush",
           });
+          markViewportUserModified(chartId);
           const newTransform = convertBrushToTransform(
             brushRect,
             transform,
@@ -984,6 +1006,7 @@ function RechartsCanvas({
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     },
     [
+      chartId,
       brushRect,
       transform,
       innerWidth,
@@ -1042,9 +1065,10 @@ function RechartsCanvas({
       visualizationLibrary: "Recharts",
       interactionSource: "double_click",
     });
+    updateChartViewport(chartId, { userModified: false });
     setTransform(homeTransform);
     setHoveredPoint(null);
-  }, [homeTransform]);
+  }, [chartId, homeTransform]);
 
   const stageCursor = isPanMode
     ? isDragging
@@ -1434,7 +1458,8 @@ function computeDataTicks(points, accessor, domainMin, domainMax, maxCount, thre
     if (v >= domainMin && v <= domainMax) inRange.add(v);
   }
   const sorted = Array.from(inRange).sort((a, b) => a - b);
-  if (sorted.length === 0 || sorted.length > threshold) {
+  // Fall back to interpolated ticks when too few data points are visible to fill the axis
+  if (sorted.length === 0 || sorted.length > threshold || sorted.length < Math.ceil(maxCount / 2)) {
     return d3.ticks(domainMin, domainMax, maxCount);
   }
   if (sorted.length <= maxCount) return sorted;

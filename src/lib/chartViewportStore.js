@@ -1,8 +1,5 @@
 const viewportStore = new Map();
 
-/**
- * DEFAULT VIEWPORT
- */
 const DEFAULT_VIEWPORT = {
   scale: 1,
 
@@ -22,11 +19,10 @@ const DEFAULT_VIEWPORT = {
 
   cameraX: 0,
   cameraY: 0,
+
+  userModified: false,
 };
 
-/**
- * GET VIEWPORT
- */
 export function getChartViewport(chartId) {
   if (!viewportStore.has(chartId)) {
     viewportStore.set(chartId, {
@@ -37,9 +33,6 @@ export function getChartViewport(chartId) {
   return viewportStore.get(chartId);
 }
 
-/**
- * UPDATE VIEWPORT
- */
 export function updateChartViewport(chartId, updates) {
   const current = getChartViewport(chartId);
 
@@ -47,6 +40,11 @@ export function updateChartViewport(chartId, updates) {
     ...current,
     ...updates,
   });
+}
+
+export function markViewportUserModified(chartId) {
+  const current = getChartViewport(chartId);
+  viewportStore.set(chartId, { ...current, userModified: true });
 }
 
 export function removeChartViewport(chartId) {
@@ -68,9 +66,6 @@ export function getViewportStoreSize() {
   return viewportStore.size;
 }
 
-/**
- * CLEAR ALL
- */
 export function clearViewportStore() {
   viewportStore.clear();
 }
