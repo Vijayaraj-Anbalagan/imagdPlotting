@@ -10,9 +10,7 @@ A simple Proof of Concept (POC) project for experimenting with different plottin
 - PixiJS
 - Recharts
 - Deck.gl
--
-
----
+- ***
 
 # Getting Started
 

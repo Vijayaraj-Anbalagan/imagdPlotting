@@ -367,6 +367,56 @@ body {
   transform: scale(1.02);
 }
 
+.dp-custom {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.dp-custom.active {
+  border-color: #8c8cff;
+  box-shadow: 0 0 12px rgba(106, 106, 174, 0.35);
+}
+
+.dp-input {
+  width: 150px;
+
+  padding: 10px 12px;
+
+  border: 1px solid #444;
+  border-radius: 10px;
+
+  background: #2a2a3e;
+  color: #f0f0f0;
+
+  font-size: 0.85rem;
+}
+
+.dp-input::placeholder {
+  color: #777;
+}
+
+.dp-input:focus {
+  outline: none;
+  border-color: #8c8cff;
+  box-shadow: 0 0 8px rgba(106, 106, 174, 0.35);
+}
+
+.dp-apply {
+  min-width: auto;
+}
+
+.dp-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .multi-chart-controls {
   display: flex;
   gap: 20px;

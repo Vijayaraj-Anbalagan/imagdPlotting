@@ -39,6 +39,7 @@ export function generateSyntheticPoints(totalPoints) {
     );
   }
 
+
   return syntheticPoints;
 }
 

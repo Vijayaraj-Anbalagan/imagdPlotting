@@ -5,6 +5,8 @@ import ImageCountSelector from "./components/ImageCountSelector";
 import DataPointCountControl from "./components/DataPointCountControl";
 
 import RechartsPlotter from "./components/RechartsPlotter";
+import RechartsNativePlotter from "./components/RechartsNativePlotter";
+import AgChartsPlotter from "./components/AgChartsPlotter";
 import D3Plotter from "./components/D3Plotter";
 import PixiPlotter from "./components/PixiPlotter";
 import KonvaPlotter from "./components/KonvaPlotter";
@@ -120,6 +122,14 @@ function App() {
       case "Recharts":
         return (
           <RechartsPlotter key={key} chartId={chartId} {...plotterProps} />
+        );
+      case "Recharts (Native)":
+        return (
+          <RechartsNativePlotter key={key} chartId={chartId} {...plotterProps} />
+        );
+      case "AG Charts":
+        return (
+          <AgChartsPlotter key={key} chartId={chartId} {...plotterProps} />
         );
       case "D3":
         return <D3Plotter key={key} chartId={chartId} {...plotterProps} />;

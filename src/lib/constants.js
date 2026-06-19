@@ -1,5 +1,7 @@
 export const LIBRARIES = [
   "Recharts",
+  "Recharts (Native)",
+  "AG Charts",
   "D3",
   "PixiJS",
   "Konva",

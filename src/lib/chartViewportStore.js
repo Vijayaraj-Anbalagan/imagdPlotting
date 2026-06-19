@@ -22,6 +22,7 @@ const DEFAULT_VIEWPORT = {
 
   userModified: false,
 };
+// console.log("Overall view ports available", viewportStore)
 
 export function getChartViewport(chartId) {
   if (!viewportStore.has(chartId)) {
@@ -29,6 +30,7 @@ export function getChartViewport(chartId) {
       ...DEFAULT_VIEWPORT,
     });
   }
+
 
   return viewportStore.get(chartId);
 }
