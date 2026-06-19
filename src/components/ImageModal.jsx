@@ -24,45 +24,62 @@ export default function ImageModal({
   useEffect(() => {
     if (!viewerDivRef.current) return;
 
-    const viewer = OpenSeaDragon({
-      element: viewerDivRef.current,
-      prefixUrl: "/osd/",
-      tileSources: {
-        type: "image",
-        url: images[currentIndex],
-      },
-      showNavigationControl: true,
-      showZoomControl: true,
-      showHomeControl: true,
-      showFullPageControl: true,
-      navigationControlAnchor: OpenSeaDragon.ControlAnchor.TOP_LEFT,
-      gestureSettingsMouse: { clickToZoom: true },
-      defaultZoomLevel: 0,
-      minZoomLevel: 0.001,
-      maxZoomLevel: 20,
-      visibilityRatio: 1,
-      constrainDuringPan: true,
-      background: "#000",
-      animationTime: 0.3,
-      blendTime: 0.1,
-    });
+    let viewer = null;
+    let destroyed = false;
 
-    // After OSD resizes (full-page toggle or window resize) re-fit the image
-    // to fill the new container. rAF waits for the browser to apply the layout.
-    const refit = () => {
-      requestAnimationFrame(() => {
-        if (viewerRef.current) viewer.viewport.goHome(true);
+    // OSD 5+ requires the host element to be fully committed to the DOM before
+    // initialisation so its canvas drawer can obtain a valid 2D context.
+    // A zero-delay timeout lets the portal flush its DOM writes first.
+    const timerId = setTimeout(() => {
+      if (destroyed || !viewerDivRef.current) return;
+
+      viewer = OpenSeaDragon({
+        element: viewerDivRef.current,
+        prefixUrl: "/osd/",
+        // Explicitly select the canvas drawer — required in OSD 5+/6+.
+        drawer: "canvas",
+        tileSources: {
+          type: "image",
+          url: images[currentIndex],
+        },
+        showNavigationControl: true,
+        showZoomControl: true,
+        showHomeControl: true,
+        showFullPageControl: true,
+        navigationControlAnchor: OpenSeaDragon.ControlAnchor.TOP_LEFT,
+        gestureSettingsMouse: { clickToZoom: true },
+        defaultZoomLevel: 0,
+        minZoomLevel: 0.001,
+        maxZoomLevel: 20,
+        visibilityRatio: 1,
+        constrainDuringPan: true,
+        background: "#000",
+        animationTime: 0.3,
+        blendTime: 0.1,
       });
-    };
 
-    viewer.addHandler("full-page", refit);
-    viewer.addHandler("resize", refit);
+      // After OSD resizes (full-page toggle or window resize) re-fit the image
+      // to fill the new container. rAF waits for the browser to apply the layout.
+      const refit = () => {
+        requestAnimationFrame(() => {
+          if (viewerRef.current) viewer.viewport.goHome(true);
+        });
+      };
 
-    viewerRef.current = viewer;
+      viewer.addHandler("full-page", refit);
+      viewer.addHandler("resize", refit);
+      viewer._refitHandler = refit;
+      viewerRef.current = viewer;
+    }, 0);
+
     return () => {
-      viewer.removeHandler("full-page", refit);
-      viewer.removeHandler("resize", refit);
-      viewer.destroy();
+      destroyed = true;
+      clearTimeout(timerId);
+      if (viewer) {
+        viewer.removeHandler("full-page", viewer._refitHandler);
+        viewer.removeHandler("resize", viewer._refitHandler);
+        viewer.destroy();
+      }
       viewerRef.current = null;
     };
   }, [currentIndex, images]);

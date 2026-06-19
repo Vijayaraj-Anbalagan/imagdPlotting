@@ -376,7 +376,9 @@ body {
   border: 1px solid transparent;
   border-radius: 12px;
 
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .dp-custom.active {

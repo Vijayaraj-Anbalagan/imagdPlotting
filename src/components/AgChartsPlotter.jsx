@@ -14,6 +14,11 @@ import { PLOT_DIMENSIONS, DATA_POINT_LIMITS } from "../lib/constants";
 import { generateSyntheticPoints } from "../lib/syntheticDataGenerator";
 import ImageModal from "./ImageModal";
 import { logChartInteractionEvent } from "../lib/chartInteractionLogger";
+import {
+  getChartViewport,
+  updateChartViewport,
+  markViewportUserModified,
+} from "../lib/chartViewportStore";
 
 const PLOT_BG = "#16213e";
 const GRID_STROKE = "#2a2a3e";
@@ -24,6 +29,12 @@ const AXIS_LABEL = "#9aa0b4";
 // a single square texture used as the marker's image fill, so the whole "N
 // images per point" cluster becomes one bitmap that AG Charts renders natively.
 const COMPOSITE_TILE_PX = 128;
+
+const AXIS_LABEL_MIN_FRACTION_DIGITS = 2;
+
+const ZOOM_SCROLL_STEP = 0.05;
+
+const ZOOM_UPDATE_THRESHOLD = 0.05;
 
 // Module-level cache so composites survive remounts (multi-chart / virtualized
 // mode) and are shared across every chart instance. Keyed by `${url}@${count}`.
@@ -63,7 +74,7 @@ async function buildComposite(url, imageCount) {
   const img = await loadImage(url);
   const { columns, rows } = chooseGrid(imageCount);
 
-  // Square composite canvas; square sub-image is limited by the tighter axis.
+  // Square composite canvas; sub-images centered within the square cell.
   const cell = COMPOSITE_TILE_PX * Math.max(columns, rows);
   const sub = Math.min(cell / columns, cell / rows);
   const clusterWidth = columns * sub;
@@ -76,6 +87,9 @@ async function buildComposite(url, imageCount) {
   canvas.height = cell;
   const ctx = canvas.getContext("2d");
 
+  ctx.fillStyle = PLOT_BG;
+  ctx.fillRect(0, 0, cell, cell);
+
   for (let index = 0; index < imageCount; index++) {
     const column = index % columns;
     const row = Math.floor(index / columns);
@@ -87,7 +101,7 @@ async function buildComposite(url, imageCount) {
   return dataUrl;
 }
 
-function AgChartsPlotter({ imageCount, dataPointCount }) {
+function AgChartsPlotter({ imageCount, dataPointCount, chartId }) {
   const {
     plotterPoints: fetchedPoints,
     isLoading,
@@ -111,19 +125,52 @@ function AgChartsPlotter({ imageCount, dataPointCount }) {
     return <div className="plotter-error">Error: {loadError}</div>;
 
   return (
-    <AgChartsCanvas plotterPoints={plotterPoints} imageCount={imageCount} />
+    <AgChartsCanvas
+      plotterPoints={plotterPoints}
+      imageCount={imageCount}
+      chartId={chartId}
+    />
   );
 }
 
-function AgChartsCanvas({ plotterPoints, imageCount }) {
+function AgChartsCanvas({ plotterPoints, imageCount, chartId }) {
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(PLOT_DIMENSIONS.width);
   const [composites, setComposites] = useState({});
   const [clickedPoint, setClickedPoint] = useState(null);
+
+  const [mountZoom] = useState(() => {
+    const vp = chartId ? getChartViewport(chartId) : null;
+    return {
+      ratioX: vp?.agZoomRatioX ?? null,
+      ratioY: vp?.agZoomRatioY ?? null,
+      factor: vp?.agZoomFactor ?? 1,
+    };
+  });
+
   // Current zoom factor (1 = fully zoomed out). Driven by AG's `zoom` event so
   // we can grow the markers as the user zooms — AG markers are a fixed pixel
   // size and don't scale on their own.
-  const [zoomFactor, setZoomFactor] = useState(1);
+  const [zoomFactor, setZoomFactor] = useState(mountZoom.factor);
+  const zoomFactorRef = useRef(mountZoom.factor);
+  const chartIdRef = useRef(chartId);
+  useEffect(() => {
+    chartIdRef.current = chartId;
+  }, [chartId]);
+
+  const prevChartIdRef = useRef(chartId);
+  useEffect(() => {
+    if (prevChartIdRef.current === chartId) return;
+    prevChartIdRef.current = chartId;
+    const vp = chartId ? getChartViewport(chartId) : null;
+    const snap = {
+      ratioX: vp?.agZoomRatioX ?? null,
+      ratioY: vp?.agZoomRatioY ?? null,
+      factor: vp?.agZoomFactor ?? 1,
+    };
+    zoomFactorRef.current = snap.factor;
+    setZoomFactor(snap.factor);
+  }, [chartId]);
 
   // Measure the container so we can convert data-space spacing into pixel
   // spacing for adaptive marker sizing.
@@ -275,11 +322,14 @@ function AgChartsCanvas({ plotterPoints, imageCount }) {
           shape: "square",
           size: markerSize,
           fillOpacity: 1,
-          strokeWidth: 0,
           itemStyler: ({ datum }) => {
             const url = composites[`${datum.image}@${imageCount}`];
             return url
-              ? { fill: { type: "image", url, fit: "stretch" } }
+              ? {
+                  fill: { type: "image", url, fit: "stretch" },
+                  stroke: "none",
+                  strokeWidth: 0,
+                }
               : { fillOpacity: 0 };
           },
           tooltip: {
@@ -300,7 +350,6 @@ function AgChartsCanvas({ plotterPoints, imageCount }) {
           },
         },
       ],
-      // AG Charts v13: `axes` is a dictionary keyed by x/y, NOT an array.
       axes: {
         x: {
           type: "number",
@@ -312,8 +361,18 @@ function AgChartsCanvas({ plotterPoints, imageCount }) {
             color: AXIS_LABEL,
             fontSize: 11,
             avoidCollisions: false,
+            minSpacing: 4,
+            ...{
+              formatter: ({ value, fractionDigits }) =>
+                value.toFixed(
+                  Math.max(fractionDigits ?? 0, AXIS_LABEL_MIN_FRACTION_DIGITS),
+                ),
+            },
           },
-          tick: { enabled: true, stroke: AXIS_STROKE },
+          tick: {
+            enabled: true,
+            stroke: AXIS_STROKE,
+          },
           line: { enabled: true, stroke: AXIS_STROKE },
           gridLine: { enabled: true, style: [{ stroke: GRID_STROKE }] },
         },
@@ -322,20 +381,28 @@ function AgChartsCanvas({ plotterPoints, imageCount }) {
           position: "left",
           min: yDomain[0],
           max: yDomain[1],
+          nice: false,
           label: {
             enabled: true,
             color: AXIS_LABEL,
             fontSize: 11,
             avoidCollisions: false,
+            minSpacing: 4,
+            ...{
+              formatter: ({ value, fractionDigits }) =>
+                value.toFixed(
+                  Math.max(fractionDigits ?? 0, AXIS_LABEL_MIN_FRACTION_DIGITS),
+                ),
+            },
           },
-          tick: { enabled: true, stroke: AXIS_STROKE },
+          tick: {
+            enabled: true,
+            stroke: AXIS_STROKE,
+          },
           line: { enabled: true, stroke: AXIS_STROKE },
           gridLine: { enabled: true, style: [{ stroke: GRID_STROKE }] },
         },
       },
-      // Enterprise zoom: wheel = zoom, drag = select-to-zoom (brush),
-      // Alt+drag = pan, double-click = reset. anchorPoint 'pointer' zooms toward
-      // the cursor instead of the axis edge.
       zoom: {
         enabled: true,
         axes: "xy",
@@ -346,15 +413,41 @@ function AgChartsCanvas({ plotterPoints, imageCount }) {
         panKey: "alt",
         anchorPointX: "pointer",
         anchorPointY: "pointer",
+        scrollingStep: ZOOM_SCROLL_STEP,
       },
-      // Grow markers with the zoom level: ratioX/ratioY are the visible fraction
-      // of each axis, so 1/span is the zoom factor.
+      ...(mountZoom.ratioX || mountZoom.ratioY
+        ? {
+            initialState: {
+              zoom: {
+                ratioX: mountZoom.ratioX,
+                ratioY: mountZoom.ratioY,
+              },
+            },
+          }
+        : {}),
       listeners: {
         zoom: (event) => {
-          const spanX = (event.ratioX?.end ?? 1) - (event.ratioX?.start ?? 0);
-          const spanY = (event.ratioY?.end ?? 1) - (event.ratioY?.start ?? 0);
+          const ratioX = event.ratioX ?? null;
+          const ratioY = event.ratioY ?? null;
+          const spanX = (ratioX?.end ?? 1) - (ratioX?.start ?? 0);
+          const spanY = (ratioY?.end ?? 1) - (ratioY?.start ?? 0);
           const span = Math.max(0.0001, (spanX + spanY) / 2);
-          setZoomFactor(1 / span);
+          const next = 1 / span;
+
+          // Persist the raw ratios so we can restore them after a remount.
+          if (chartIdRef.current) {
+            markViewportUserModified(chartIdRef.current);
+            updateChartViewport(chartIdRef.current, {
+              agZoomRatioX: ratioX,
+              agZoomRatioY: ratioY,
+              agZoomFactor: next,
+            });
+          }
+
+          if (Math.abs(next - zoomFactorRef.current) > ZOOM_UPDATE_THRESHOLD) {
+            zoomFactorRef.current = next;
+            setZoomFactor(next);
+          }
         },
       },
     }),
@@ -366,6 +459,7 @@ function AgChartsCanvas({ plotterPoints, imageCount }) {
       xDomain,
       yDomain,
       zoomFactor,
+      mountZoom,
     ],
   );
 

@@ -20,6 +20,13 @@ const DEFAULT_VIEWPORT = {
   cameraX: 0,
   cameraY: 0,
 
+  // AG Charts zoom state: ratioX/ratioY are the visible fraction [0,1] of the
+  // data domain (e.g. { start: 0.2, end: 0.6 } means 40% of the axis is shown).
+  // zoomFactor mirrors the derived scalar used to scale marker size.
+  agZoomRatioX: null,
+  agZoomRatioY: null,
+  agZoomFactor: 1,
+
   userModified: false,
 };
 // console.log("Overall view ports available", viewportStore)
